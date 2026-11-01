@@ -49,4 +49,9 @@ double brown_forsythe_p(const std::vector<double> &a,const std::vector<double> &
 
 VarCompare var_compare(const std::vector<double> &a,const std::vector<double> &b,const VarParams &p);
 
+// 2 つの信号の相関(散布図の注記用)。x[i] と y[i] は同じショットの値。
+// どちらかが NAN / inf の組は除く。残りが 3 組未満、またはどちらかが定数なら NAN
+double pearson_r(const std::vector<double> &x,const std::vector<double> &y);      // ピアソンの積率相関(直線的な関係)
+double spearman_rho(const std::vector<double> &x,const std::vector<double> &y);   // 順位相関(単調な関係。同順位は平均順位)
+
 #endif // VARIATION_H

@@ -46,6 +46,30 @@ int main(int argc,char**argv){
     { std::vector<double> a={1,2,3,4,5,6,7,8}, b={1,2,3,4,5,6,7,8}; b[7]=20;
       auto r=var_compare(a,b,p);
       printf("outlier  : fold=%.3f p=%.3f verdict=%d\n",r.fold,r.pval,r.verdict); }
+    // 10. 相関(散布図の注記用)
+    {
+        std::mt19937 h(3); std::normal_distribution<double> nd(0,1);
+        std::vector<double> x(300),lin(300),sq(300),ex(300),neg(300),noise(300);
+        for(int i=0;i<300;i++){ x[i]=nd(h); lin[i]=2*x[i]+0.1*nd(h); sq[i]=x[i]*x[i]; ex[i]=std::exp(2*x[i]); neg[i]=-3*x[i]+1; noise[i]=nd(h); }
+        printf("corr     : lin r=%.3f rho=%.3f | x^2 r=%.3f rho=%.3f | exp r=%.3f rho=%.3f | neg r=%.3f | noise r=%.3f\n",
+               pearson_r(x,lin),spearman_rho(x,lin),pearson_r(x,sq),spearman_rho(x,sq),pearson_r(x,ex),spearman_rho(x,ex),pearson_r(x,neg),pearson_r(x,noise));
+        CHECK(pearson_r(x,lin)>0.99 && spearman_rho(x,lin)>0.99);
+        CHECK(std::fabs(pearson_r(x,sq))<0.15 && std::fabs(spearman_rho(x,sq))<0.15);   // 放物線は相関ほぼ 0
+        CHECK(spearman_rho(x,ex)>0.9999 && pearson_r(x,ex)<0.95);                       // 単調だが直線でない: rho は 1、r は小さい
+        CHECK(pearson_r(x,neg)<-0.9999);
+        CHECK(std::fabs(pearson_r(x,noise))<0.2);
+        std::vector<double> c(10,1.0), y10={1,2,3,4,5,6,7,8,9,10};
+        CHECK(!std::isfinite(pearson_r(c,y10)));                                         // 定数は NAN
+        CHECK(!std::isfinite(pearson_r({1,2},{1,2})));                                   // 2 組以下は NAN
+        // NAN の組は除く
+        std::vector<double> xn={1,2,NAN,4,5,6}, yn={2,4,6,NAN,10,12};
+        CHECK(pearson_r(xn,yn)>0.9999);
+        // 同順位(タイ)は平均順位: x の 1,1,2,2 と y の 1,2,3,4 → 手計算
+        std::vector<double> tx={1,1,2,2}, ty={1,2,3,4};
+        double rho = spearman_rho(tx,ty);
+        printf("ties     : rho=%.6f (expected 0.894427)\n",rho);
+        CHECK(std::fabs(rho-0.894427191)<1e-6);
+    }
     // 9. 外部の値(scipy)との比較用: 固定データを出力
     if(argc>1){
         std::mt19937 h(7); auto a=gen(h,40,0,1), b=gen(h,25,0,2);

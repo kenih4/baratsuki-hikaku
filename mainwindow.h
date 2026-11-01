@@ -41,6 +41,7 @@ private slots:
     void on_pushButtonNowB_clicked();
     void on_treeWidget_itemDoubleClicked(QTreeWidgetItem *item, int column);
     void on_pushButtonDelete_clicked();
+    void on_listWidget_doubleClicked(const QModelIndex &index);   // ダブルクリックした信号を先頭(基準信号)にする
     void on_spinThreshold_valueChanged(double value);     // 閾値が変わったら、判定だけ描き直す
     void on_checkBoxSameY_toggled(bool checked);
     void on_checkBoxCenter_toggled(bool checked);         // 各期間の平均を引いて、真ん中にそろえて表示する
@@ -73,8 +74,14 @@ private:
     QWidget *plot_container = nullptr;
     QGridLayout *plot_grid = nullptr;
     int plot_row_h = 170;               // 1 行の高さ(スクロール領域の見える高さの 1/3)
-    QVector<QCustomPlot*> plots_a;      // 左列(日時 A)
-    QVector<QCustomPlot*> plots_b;      // 右列(日時 B)
+    // 1 行 = 4 列: A のトレンド | A の散布図 | B のトレンド | B の散布図
+    // 散布図は、横軸がその行の信号、縦軸が基準信号(リストの一番上の信号)。同じショットどうしの組
+    QVector<QCustomPlot*> plots_a;      // 日時 A のトレンド
+    QVector<QCustomPlot*> scatter_a;    // 日時 A の散布図
+    QVector<QCustomPlot*> plots_b;      // 日時 B のトレンド
+    QVector<QCustomPlot*> scatter_b;    // 日時 B の散布図
+    void scatter_init(QCustomPlot *plot,const QColor &color);
+    void refresh_reference_font();      // リストの先頭(基準信号)だけを太字にする
 
     // 取得済みのデータから、グラフ・一覧・通知を描き直す(DB は読まない)
     void update_view();
@@ -88,6 +95,11 @@ private:
     void draw_plot(QCustomPlot *plot,const QVector<double> &t,const QVector<double> &v,const VarStats &st,
                    double xbeg,double xend,double ylo,double yhi,const QString &signal,
                    const QColor &color,VarVerdict verdict,double offset);
+    // 散布図 1 つを描く。x, y は同じショットの値の組(引く前の値)。xoff, yoff は表示のとき引く量(Center がオフなら 0)、
+    // xlo..yhi は引いたあとの値での範囲。reference=true は基準信号の行(自分自身との散布図は無意味なので空にする)
+    void draw_scatter(QCustomPlot *plot,const std::vector<double> &x,const std::vector<double> &y,
+                      double xlo,double xhi,double ylo,double yhi,double xoff,double yoff,
+                      const QString &xname,const QString &yname,VarVerdict verdict,bool reference);
     QTableWidget *result_table = nullptr;
     QStringList view_signals;           // 最後に Get したときの信号(行の順)
     double win_a_beg = 0,win_a_end = 0; // 日時 A・B の期間(エポック秒)

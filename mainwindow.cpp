@@ -99,6 +99,13 @@ MainWindow::MainWindow(QWidget *parent)
     load_signal_list(ui->listWidget,"signals.txt");
     // listWidget が変更されたら信号リストファイルに保存する
     connect_save_signal_list(ui->listWidget,"signals.txt");
+    // 先頭の信号(基準信号)を太字にする。リストが変わるたびに付け直す
+    ui->listWidget->setToolTip(tr("The top signal is the reference (Y axis of the scatter plots).\nDouble-click a signal to move it to the top."));
+    auto refresh = [this](){refresh_reference_font();};
+    connect(ui->listWidget->model(),&QAbstractItemModel::rowsInserted,this,refresh);
+    connect(ui->listWidget->model(),&QAbstractItemModel::rowsRemoved,this,refresh);
+    connect(ui->listWidget->model(),&QAbstractItemModel::rowsMoved,this,refresh);
+    refresh_reference_font();
 
     create_tree();
     createActions();
@@ -231,8 +238,9 @@ void MainWindow::fit_row_height()
     int h = (vh - 2*plot_grid->spacing())/3;
     if(h<100 || h==plot_row_h)return;      // まだ大きさが決まっていない / 変化なし
     plot_row_h = h;
-    for(QCustomPlot *p : plots_a)p->setFixedHeight(plot_row_h);
-    for(QCustomPlot *p : plots_b)p->setFixedHeight(plot_row_h);
+    for(const QVector<QCustomPlot*> *col : {&plots_a,&scatter_a,&plots_b,&scatter_b}){
+        for(QCustomPlot *p : *col)p->setFixedHeight(plot_row_h);
+    }
 }
 
 void MainWindow::plot_init(QCustomPlot *plot,const QColor &color)
@@ -247,27 +255,49 @@ void MainWindow::plot_init(QCustomPlot *plot,const QColor &color)
     plot->setInteractions(QCP::iRangeDrag|QCP::iRangeZoom);
 }
 
+// 散布図(横軸 = その行の信号、縦軸 = 基準信号)。軸は普通の数値軸
+void MainWindow::scatter_init(QCustomPlot *plot,const QColor &color)
+{
+    plot->addGraph();
+    plot->graph(0)->setPen(QPen(color));
+    plot->graph(0)->setLineStyle(QCPGraph::lsNone);
+    plot->graph(0)->setScatterStyle(QCPScatterStyle(QCPScatterStyle::ssCircle,color,Qt::white,5));
+    plot->setInteractions(QCP::iRangeDrag|QCP::iRangeZoom);
+}
+
 // 行を n 行以上にする(足りない分だけ作る。減らしはしない)
 void MainWindow::ensure_plot_rows(int n)
 {
     while(plots_a.size()<n){
         int k = plots_a.size();
         QCustomPlot *a = new QCustomPlot(plot_container);
+        QCustomPlot *sa = new QCustomPlot(plot_container);
         QCustomPlot *b = new QCustomPlot(plot_container);
-        for(QCustomPlot *p : {a,b}){
-            p->setMinimumWidth(248);
+        QCustomPlot *sb = new QCustomPlot(plot_container);
+        for(QCustomPlot *p : {a,sa,b,sb}){
+            p->setMinimumWidth(p==a || p==b ? 200 : 140);
             p->setFixedHeight(plot_row_h);
             p->installEventFilter(this);        // ホイールでスクロールするため
         }
         plot_init(a,COLOR_A);
+        scatter_init(sa,COLOR_A);
         plot_init(b,COLOR_B);
+        scatter_init(sb,COLOR_B);
         plot_grid->addWidget(a,k,0);
-        plot_grid->addWidget(b,k,1);
-        a->show();
-        b->show();
+        plot_grid->addWidget(sa,k,1);
+        plot_grid->addWidget(b,k,2);
+        plot_grid->addWidget(sb,k,3);
+        for(QCustomPlot *p : {a,sa,b,sb})p->show();
         plots_a.append(a);
+        scatter_a.append(sa);
         plots_b.append(b);
+        scatter_b.append(sb);
     }
+    // 横幅は、トレンドを散布図より広く(3 : 2)
+    plot_grid->setColumnStretch(0,3);
+    plot_grid->setColumnStretch(1,2);
+    plot_grid->setColumnStretch(2,3);
+    plot_grid->setColumnStretch(3,2);
 }
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *event)
@@ -278,7 +308,7 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
     // グラフの上のホイールは、グラフの拡大縮小ではなく領域のスクロールにする(Ctrl+ホイールで拡大縮小)
     if(event->type()==QEvent::Wheel && plot_scroll){
         QCustomPlot *plot = qobject_cast<QCustomPlot*>(obj);
-        if(plot && (plots_a.contains(plot) || plots_b.contains(plot))){
+        if(plot && (plots_a.contains(plot) || plots_b.contains(plot) || scatter_a.contains(plot) || scatter_b.contains(plot))){
             QWheelEvent *we = static_cast<QWheelEvent*>(event);
             if(!(we->modifiers() & Qt::ControlModifier)){
                 QScrollBar *bar = plot_scroll->verticalScrollBar();
@@ -375,6 +405,29 @@ static bool value_range(const std::vector<double> &vals,double &lo,double &hi)
     return ok;
 }
 
+// 判定に応じた背景色(トレンドも散布図も同じ色にして、行ごとに見分けやすくする)
+static QColor verdict_background(VarVerdict verdict)
+{
+    if(verdict==VAR_LARGE)return QColor(255,226,226);          // 差が大きい: 薄い赤
+    if(verdict==VAR_LARGE_NS)return QColor(255,243,210);       // 大きいが有意でない: 薄い黄
+    return Qt::white;
+}
+
+// グラフ左上の注記。1 つ作って使い回す(描くたびに作ると重なる)
+static QCPItemText *make_info_text(QCustomPlot *plot,const QFont &base)
+{
+    QCPItemText *t = new QCPItemText(plot);
+    t->setPositionAlignment(Qt::AlignTop|Qt::AlignLeft);
+    t->position->setType(QCPItemPosition::ptAxisRectRatio);
+    t->position->setCoords(0.01,0.01);
+    t->setPen(Qt::NoPen);
+    t->setBrush(QBrush(QColor(255,255,255,200)));
+    QFont tf = base;
+    tf.setPointSize(8);
+    t->setFont(tf);
+    return t;
+}
+
 // 1 つのグラフ(信号 1 つ・期間 1 つ)を描く。
 //   平均 ± 標準偏差の帯と、左上の注記を重ね、判定に応じて背景に色を付ける
 //   offset : 表示するときに、値から引く量(Center がオフなら 0)。ylo, yhi は、引いたあとの値での範囲。
@@ -393,10 +446,7 @@ void MainWindow::draw_plot(QCustomPlot *plot,const QVector<double> &t,const QVec
     plot->yAxis->setLabelFont(lf);
     plot->yAxis->setLabel(offset!=0 ? tr("%1 (- mean)").arg(signal) : signal);
 
-    QColor bg = Qt::white;
-    if(verdict==VAR_LARGE)bg = QColor(255,226,226);         // 差が大きい: 薄い赤
-    else if(verdict==VAR_LARGE_NS)bg = QColor(255,243,210); // 大きいが有意でない: 薄い黄
-    plot->setBackground(QBrush(bg));
+    plot->setBackground(QBrush(verdict_background(verdict)));
 
     PlotItems &it = plot_items[plot];
     if(!it.band){
@@ -418,19 +468,57 @@ void MainWindow::draw_plot(QCustomPlot *plot,const QVector<double> &t,const QVec
     }
     it.band->setVisible(has_band);
 
-    if(!it.text){
-        it.text = new QCPItemText(plot);        // 注記は 1 つ作って使い回す(描くたびに作ると重なる)
-        it.text->setPositionAlignment(Qt::AlignTop|Qt::AlignLeft);
-        it.text->position->setType(QCPItemPosition::ptAxisRectRatio);
-        it.text->position->setCoords(0.01,0.01);
-        it.text->setPen(Qt::NoPen);
-        it.text->setBrush(QBrush(QColor(255,255,255,200)));
-        QFont tf = font();
-        tf.setPointSize(8);
-        it.text->setFont(tf);
-    }
+    if(!it.text)it.text = make_info_text(plot,font());
     it.text->setText(st.n==0 ? tr("no data")
                              : tr("n=%1  mean=%2  sd=%3").arg(st.n).arg(st.mean,0,'g',5).arg(st.sd,0,'g',4));
+    plot->replot(QCustomPlot::rpQueuedReplot);
+}
+
+// 2 つの値の列のうち、両方とも有限な組だけを集める(同じショットの値どうし)
+static void collect_pairs(Shot_data *d,const string &xname,const string &yname,std::vector<double> &x,std::vector<double> &y)
+{
+    for(int i=0;i<d->data_size();i++){
+        double vx = d->value(xname,i),vy = d->value(yname,i);
+        if(!std::isfinite(vx) || !std::isfinite(vy))continue;
+        x.push_back(vx);
+        y.push_back(vy);
+    }
+}
+
+void MainWindow::draw_scatter(QCustomPlot *plot,const std::vector<double> &x,const std::vector<double> &y,
+                              double xlo,double xhi,double ylo,double yhi,double xoff,double yoff,
+                              const QString &xname,const QString &yname,VarVerdict verdict,bool reference)
+{
+    QVector<double> sx,sy;
+    if(!reference){
+        for(size_t i=0;i<x.size() && i<y.size();i++){
+            sx.append(x[i]-xoff);
+            sy.append(y[i]-yoff);
+        }
+    }
+    plot->graph(0)->setData(sx,sy);
+    plot->xAxis->setRange(xlo,xhi);
+    plot->yAxis->setRange(ylo,yhi);
+    QFont lf = font();
+    lf.setPointSize(7);
+    for(QCPAxis *ax : {plot->xAxis,plot->yAxis}){
+        ax->setLabelFont(lf);
+        ax->setTickLabelFont(lf);
+    }
+    const bool shifted = xoff!=0 || yoff!=0;
+    plot->xAxis->setLabel(reference ? QString() : (shifted ? tr("%1 (- mean)").arg(xname) : xname));
+    plot->yAxis->setLabel(reference ? QString() : (shifted ? tr("%1 (- mean)").arg(yname) : yname));
+    plot->setBackground(QBrush(verdict_background(verdict)));
+
+    PlotItems &it = plot_items[plot];
+    if(!it.text)it.text = make_info_text(plot,font());
+    if(reference){
+        it.text->setText(tr("reference signal\n(top of the list)"));
+    }else{
+        double r = pearson_r(x,y),rho = spearman_rho(x,y);
+        auto fmt = [](double v){return std::isfinite(v) ? QString::number(v,'f',2) : QString("-");};
+        it.text->setText(tr("n=%1  r=%2  rho=%3").arg(sx.size()).arg(fmt(r)).arg(fmt(rho)));
+    }
     plot->replot(QCustomPlot::rpQueuedReplot);
 }
 
@@ -454,33 +542,61 @@ void MainWindow::update_view()
         cmp[i] = var_compare(sa[i],sb[i],var_params);
     }
 
-    for(int k=0;k<plots_a.size();k++){
-        bool show = k<n;
-        plots_a[k]->setVisible(show);
-        plots_b[k]->setVisible(show);
-        if(!show)continue;
-        // 縦軸の範囲: 同じ行の A と B はそろえる(そろえないと、バラつきの大小が見た目で比べられない)
-        double lo_a = 0,hi_a = 1,lo_b = 0,hi_b = 1;
-        bool ok_a = value_range(sa[k],lo_a,hi_a),ok_b = value_range(sb[k],lo_b,hi_b);
-        // Center: 各期間の平均を引いて表示する(平均が違っても、バラつきの幅を重ねて見比べられる)。
-        // 引くのは表示だけで、標準偏差・倍率・判定は変わらない
-        double off_a = (center && ok_a && std::isfinite(cmp[k].a.mean)) ? cmp[k].a.mean : 0;
-        double off_b = (center && ok_b && std::isfinite(cmp[k].b.mean)) ? cmp[k].b.mean : 0;
-        if(ok_a){lo_a -= off_a;hi_a -= off_a;}
-        if(ok_b){lo_b -= off_b;hi_b -= off_b;}
-        if(same_y && ok_a && ok_b){
-            lo_a = lo_b = std::min(lo_a,lo_b);
-            hi_a = hi_b = std::max(hi_a,hi_b);
+    // 縦軸(トレンドの縦軸、散布図の横軸と縦軸)の範囲と、Center のとき引く量を、信号 1 つぶんについて決める。
+    //   範囲 : 同じ行の A と B はそろえる(そろえないと、バラつきの大小が見た目で比べられない)
+    //   Center : 各期間の平均を引いて表示する(平均が違っても、バラつきの幅を重ねて見比べられる)。
+    //            引くのは表示だけで、標準偏差・倍率・判定は変わらない
+    struct Axis{double lo = 0,hi = 1,off = 0;bool ok = false;};
+    auto make_axes = [center,same_y](const std::vector<double> &va_,const std::vector<double> &vb_,
+                                     const VarStats &sta,const VarStats &stb,Axis &A,Axis &B){
+        A = Axis();
+        B = Axis();
+        A.ok = value_range(va_,A.lo,A.hi);
+        B.ok = value_range(vb_,B.lo,B.hi);
+        A.off = (center && A.ok && std::isfinite(sta.mean)) ? sta.mean : 0;
+        B.off = (center && B.ok && std::isfinite(stb.mean)) ? stb.mean : 0;
+        if(A.ok){A.lo -= A.off;A.hi -= A.off;}
+        if(B.ok){B.lo -= B.off;B.hi -= B.off;}
+        if(same_y && A.ok && B.ok){
+            A.lo = B.lo = std::min(A.lo,B.lo);
+            A.hi = B.hi = std::max(A.hi,B.hi);
         }
         auto pad = [](double &lo,double &hi){
             double d = (hi-lo)*0.1;
             if(!(d>0))d = std::max(std::fabs(lo)*0.05,1.0);     // 値がすべて同じとき
             lo -= d;hi += d;
         };
-        if(ok_a)pad(lo_a,hi_a);
-        if(ok_b)pad(lo_b,hi_b);
-        draw_plot(plots_a[k],ta[k],va[k],cmp[k].a,win_a_beg,win_a_end,lo_a,hi_a,view_signals[k],COLOR_A,cmp[k].verdict,off_a);
-        draw_plot(plots_b[k],tb[k],vb[k],cmp[k].b,win_b_beg,win_b_end,lo_b,hi_b,view_signals[k],COLOR_B,cmp[k].verdict,off_b);
+        if(A.ok)pad(A.lo,A.hi);
+        if(B.ok)pad(B.lo,B.hi);
+    };
+    // 散布図の縦軸は、基準信号(リストの一番上)
+    Axis ref_a,ref_b;
+    string ref_name;
+    if(n>0){
+        make_axes(sa[0],sb[0],cmp[0].a,cmp[0].b,ref_a,ref_b);
+        ref_name = view_signals[0].toStdString();
+    }
+
+    for(int k=0;k<plots_a.size();k++){
+        bool show = k<n;
+        for(QCustomPlot *p : {plots_a[k],scatter_a[k],plots_b[k],scatter_b[k]})p->setVisible(show);
+        if(!show)continue;
+        Axis ax_a,ax_b;
+        make_axes(sa[k],sb[k],cmp[k].a,cmp[k].b,ax_a,ax_b);
+        draw_plot(plots_a[k],ta[k],va[k],cmp[k].a,win_a_beg,win_a_end,ax_a.lo,ax_a.hi,view_signals[k],COLOR_A,cmp[k].verdict,ax_a.off);
+        draw_plot(plots_b[k],tb[k],vb[k],cmp[k].b,win_b_beg,win_b_end,ax_b.lo,ax_b.hi,view_signals[k],COLOR_B,cmp[k].verdict,ax_b.off);
+        // 散布図: 横軸 = この行の信号(トレンドの縦軸と同じ範囲・同じ引く量)、縦軸 = 基準信号
+        const bool is_ref = (k==0);
+        std::vector<double> xa,ya,xb,yb;
+        if(!is_ref){
+            const string name = view_signals[k].toStdString();
+            collect_pairs(data_a,name,ref_name,xa,ya);
+            collect_pairs(data_b,name,ref_name,xb,yb);
+        }
+        draw_scatter(scatter_a[k],xa,ya,ax_a.lo,ax_a.hi,ref_a.lo,ref_a.hi,ax_a.off,ref_a.off,
+                     view_signals[k],view_signals[0],cmp[k].verdict,is_ref);
+        draw_scatter(scatter_b[k],xb,yb,ax_b.lo,ax_b.hi,ref_b.lo,ref_b.hi,ax_b.off,ref_b.off,
+                     view_signals[k],view_signals[0],cmp[k].verdict,is_ref);
     }
 
     // 一覧: 差が大きい順(判定の重さ → 倍率の大きい順)
@@ -786,6 +902,28 @@ void MainWindow::on_pushButtonDelete_clicked()
     {
         delete ( currentItem );
     }
+}
+
+// リストの先頭の信号が基準信号(散布図の縦軸)。先頭だけ太字にして見分ける
+void MainWindow::refresh_reference_font()
+{
+    for(int i=0;i<ui->listWidget->count();++i){
+        QListWidgetItem *it = ui->listWidget->item(i);
+        QFont f = it->font();
+        if(f.bold()!=(i==0)){
+            f.setBold(i==0);
+            it->setFont(f);
+        }
+    }
+}
+
+// ダブルクリックした信号を、リストの先頭(基準信号)にする。リストの変更なので、signals.txt にも保存される
+void MainWindow::on_listWidget_doubleClicked(const QModelIndex &index)
+{
+    QListWidgetItem *it = ui->listWidget->takeItem(index.row());
+    if(!it)return;
+    ui->listWidget->insertItem(0,it);
+    ui->listWidget->setCurrentRow(0);
 }
 
 void MainWindow::createActions()

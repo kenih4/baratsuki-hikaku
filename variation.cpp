@@ -137,3 +137,67 @@ VarCompare var_compare(const vector<double> &a,const vector<double> &b,const Var
     }
     return r;
 }
+
+// 有限な組だけを取り出す
+static void finite_pairs(const vector<double> &x,const vector<double> &y,vector<double> &fx,vector<double> &fy)
+{
+    size_t n = std::min(x.size(),y.size());
+    for(size_t i=0;i<n;i++){
+        if(std::isfinite(x[i]) && std::isfinite(y[i])){
+            fx.push_back(x[i]);
+            fy.push_back(y[i]);
+        }
+    }
+}
+
+static double pearson_of(const vector<double> &x,const vector<double> &y)
+{
+    size_t n = x.size();
+    if(n<3)return NAN;
+    double mx = 0,my = 0;
+    for(size_t i=0;i<n;i++){mx += x[i];my += y[i];}
+    mx /= n;my /= n;
+    double sxy = 0,sxx = 0,syy = 0;
+    for(size_t i=0;i<n;i++){
+        sxy += (x[i]-mx)*(y[i]-my);
+        sxx += (x[i]-mx)*(x[i]-mx);
+        syy += (y[i]-my)*(y[i]-my);
+    }
+    if(!(sxx>0) || !(syy>0))return NAN;
+    double r = sxy/std::sqrt(sxx*syy);
+    return std::max(-1.0,std::min(1.0,r));      // 丸めで ±1 をわずかに超えないように
+}
+
+double pearson_r(const vector<double> &x,const vector<double> &y)
+{
+    vector<double> fx,fy;
+    finite_pairs(x,y,fx,fy);
+    return pearson_of(fx,fy);
+}
+
+// 順位(同順位は平均順位。1 から数える)
+static vector<double> ranks_of(const vector<double> &v)
+{
+    size_t n = v.size();
+    vector<size_t> idx(n);
+    for(size_t i=0;i<n;i++)idx[i] = i;
+    std::sort(idx.begin(),idx.end(),[&v](size_t a,size_t b){return v[a]<v[b];});
+    vector<double> r(n);
+    size_t i = 0;
+    while(i<n){
+        size_t j = i;
+        while(j+1<n && v[idx[j+1]]==v[idx[i]])j++;
+        double avg = (i+j)/2.0+1;
+        for(size_t k=i;k<=j;k++)r[idx[k]] = avg;
+        i = j+1;
+    }
+    return r;
+}
+
+double spearman_rho(const vector<double> &x,const vector<double> &y)
+{
+    vector<double> fx,fy;
+    finite_pairs(x,y,fx,fy);
+    if(fx.size()<3)return NAN;
+    return pearson_of(ranks_of(fx),ranks_of(fy));
+}
