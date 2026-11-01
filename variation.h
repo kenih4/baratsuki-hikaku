@@ -27,7 +27,7 @@ enum VarVerdict{
 };
 
 struct VarParams{
-    double threshold = 2.0;     // 「差が大きい」とする倍率
+    double threshold = 1.5;     // 「差が大きい」とする倍率
     double alpha = 0.05;        // 検定の有意水準
     int min_n = 5;              // A, B とも、これ未満の個数なら判定しない
 };

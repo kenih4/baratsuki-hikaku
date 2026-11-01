@@ -22,6 +22,7 @@
 #include <QGridLayout>
 #include <QScrollBar>
 #include <QWheelEvent>
+#include <QScreen>
 #include <QDialog>
 #include <QVBoxLayout>
 #include <QLabel>
@@ -58,6 +59,8 @@ MainWindow::MainWindow(QWidget *parent)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    // 1 行が 4 列(トレンド・散布図 × A・B)なので、既定の幅は広い。画面より広くならないようにする
+    if(screen())resize(qMin(width(),screen()->availableGeometry().width()),height());
     cerr << "Config directory : " << QFileInfo(signal_list_file("signals.txt")).absolutePath().toStdString()
          << (g_config_dir.isEmpty() ? "  (default)" : "  (specified by argument)") << endl;
     load_colors();      // plot_init などで色を使う前に、settings.ini の色を読む
@@ -694,19 +697,19 @@ void MainWindow::result_row_activated(int row,int)
 
 // settings.ini の [Difference] から、差が大きいとする倍率などを読む(無い/不正なときは既定)。
 //   [Difference]
-//   ratio=2.0         ; 標準偏差の比(大きいほう/小さいほう)がこの値以上なら「差が大きい」。画面の値の初期値
+//   ratio=1.5         ; 標準偏差の比(大きいほう/小さいほう)がこの値以上なら「差が大きい」。画面の値の初期値
 //   alpha=0.05        ; 等分散の検定の有意水準。これ未満の p 値なら「有意」
 //   min_shots=5       ; A・B のどちらかの個数がこれ未満の信号は、判定しない
 void MainWindow::load_difference_settings()
 {
-    double ratio = 2.0;
+    double ratio = 1.5;
     QFileInfo fi(signal_list_file("settings.ini"));
     if(fi.exists()){
         QSettings st(fi.absoluteFilePath(),QSettings::IniFormat);
         bool ok = false;
         double r = ini_string(st,"Difference/ratio","").toDouble(&ok);
         if(ok && r>=1 && r<=1000)ratio = r;
-        else if(st.contains("Difference/ratio"))cerr << "WARNING: settings.ini Difference/ratio must be 1 to 1000; using 2" << endl;
+        else if(st.contains("Difference/ratio"))cerr << "WARNING: settings.ini Difference/ratio must be 1 to 1000; using 1.5" << endl;
         double al = ini_string(st,"Difference/alpha","").toDouble(&ok);
         if(ok && al>0 && al<1)var_params.alpha = al;
         else if(st.contains("Difference/alpha"))cerr << "WARNING: settings.ini Difference/alpha must be between 0 and 1; using 0.05" << endl;
@@ -735,7 +738,7 @@ void MainWindow::check_config_files()
     const Item items[] = {
         {"signals.txt",             "信号リスト(無ければ空。ツリーから追加)"},
         {"tree_groups.txt",         "信号ツリーのグループ名(既定の14グループを使用)"},
-        {"settings.ini",            "日時 A・B のグラフの色、差が大きいとする倍率など(既定の色、2 倍を使用)"},
+        {"settings.ini",            "日時 A・B のグラフの色、差が大きいとする倍率など(既定の色、1.5 倍を使用)"},
     };
     QStringList missing;
     for(const Item &it : items){
