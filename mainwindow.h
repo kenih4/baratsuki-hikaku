@@ -43,6 +43,7 @@ private slots:
     void on_pushButtonDelete_clicked();
     void on_spinThreshold_valueChanged(double value);     // 閾値が変わったら、判定だけ描き直す
     void on_checkBoxSameY_toggled(bool checked);
+    void on_checkBoxCenter_toggled(bool checked);         // 各期間の平均を引いて、真ん中にそろえて表示する
     void result_row_activated(int row,int column);        // 一覧の行をダブルクリックで、その信号のグラフへスクロール
 
     void show_tag_offset();     // File メニューの Tag Offset...(sacla_tag, sr_tag のオフセット)
@@ -86,7 +87,7 @@ private:
     QMap<QCustomPlot*,PlotItems> plot_items;
     void draw_plot(QCustomPlot *plot,const QVector<double> &t,const QVector<double> &v,const VarStats &st,
                    double xbeg,double xend,double ylo,double yhi,const QString &signal,
-                   const QColor &color,VarVerdict verdict);
+                   const QColor &color,VarVerdict verdict,double offset);
     QTableWidget *result_table = nullptr;
     QStringList view_signals;           // 最後に Get したときの信号(行の順)
     double win_a_beg = 0,win_a_end = 0; // 日時 A・B の期間(エポック秒)

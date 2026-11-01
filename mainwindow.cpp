@@ -377,17 +377,21 @@ static bool value_range(const std::vector<double> &vals,double &lo,double &hi)
 
 // 1 つのグラフ(信号 1 つ・期間 1 つ)を描く。
 //   平均 ± 標準偏差の帯と、左上の注記を重ね、判定に応じて背景に色を付ける
+//   offset : 表示するときに、値から引く量(Center がオフなら 0)。ylo, yhi は、引いたあとの値での範囲。
+//            注記の数値は、引く前の本当の値のまま
 void MainWindow::draw_plot(QCustomPlot *plot,const QVector<double> &t,const QVector<double> &v,const VarStats &st,
                            double xbeg,double xend,double ylo,double yhi,const QString &signal,
-                           const QColor &color,VarVerdict verdict)
+                           const QColor &color,VarVerdict verdict,double offset)
 {
-    plot->graph(0)->setData(t,v);
+    QVector<double> shown = v;
+    if(offset!=0)for(double &x : shown)x -= offset;
+    plot->graph(0)->setData(t,shown);
     plot->xAxis->setRange(xbeg,xend);
     plot->yAxis->setRange(ylo,yhi);
     QFont lf = font();
     lf.setPointSize(7);
     plot->yAxis->setLabelFont(lf);
-    plot->yAxis->setLabel(signal);
+    plot->yAxis->setLabel(offset!=0 ? tr("%1 (- mean)").arg(signal) : signal);
 
     QColor bg = Qt::white;
     if(verdict==VAR_LARGE)bg = QColor(255,226,226);         // 差が大きい: 薄い赤
@@ -409,8 +413,8 @@ void MainWindow::draw_plot(QCustomPlot *plot,const QVector<double> &t,const QVec
         QColor bc = color;
         bc.setAlpha(45);
         it.band->setBrush(QBrush(bc));
-        it.band->topLeft->setCoords(0,st.mean+st.sd);
-        it.band->bottomRight->setCoords(1,st.mean-st.sd);
+        it.band->topLeft->setCoords(0,st.mean-offset+st.sd);
+        it.band->bottomRight->setCoords(1,st.mean-offset-st.sd);
     }
     it.band->setVisible(has_band);
 
@@ -438,6 +442,7 @@ void MainWindow::update_view()
     const int n = view_signals.size();
     var_params.threshold = ui->spinThreshold->value();
     const bool same_y = ui->checkBoxSameY->isChecked();
+    const bool center = ui->checkBoxCenter->isChecked();
 
     std::vector<VarCompare> cmp(n);
     std::vector<std::vector<double>> sa(n),sb(n);
@@ -457,6 +462,12 @@ void MainWindow::update_view()
         // 縦軸の範囲: 同じ行の A と B はそろえる(そろえないと、バラつきの大小が見た目で比べられない)
         double lo_a = 0,hi_a = 1,lo_b = 0,hi_b = 1;
         bool ok_a = value_range(sa[k],lo_a,hi_a),ok_b = value_range(sb[k],lo_b,hi_b);
+        // Center: 各期間の平均を引いて表示する(平均が違っても、バラつきの幅を重ねて見比べられる)。
+        // 引くのは表示だけで、標準偏差・倍率・判定は変わらない
+        double off_a = (center && ok_a && std::isfinite(cmp[k].a.mean)) ? cmp[k].a.mean : 0;
+        double off_b = (center && ok_b && std::isfinite(cmp[k].b.mean)) ? cmp[k].b.mean : 0;
+        if(ok_a){lo_a -= off_a;hi_a -= off_a;}
+        if(ok_b){lo_b -= off_b;hi_b -= off_b;}
         if(same_y && ok_a && ok_b){
             lo_a = lo_b = std::min(lo_a,lo_b);
             hi_a = hi_b = std::max(hi_a,hi_b);
@@ -468,8 +479,8 @@ void MainWindow::update_view()
         };
         if(ok_a)pad(lo_a,hi_a);
         if(ok_b)pad(lo_b,hi_b);
-        draw_plot(plots_a[k],ta[k],va[k],cmp[k].a,win_a_beg,win_a_end,lo_a,hi_a,view_signals[k],COLOR_A,cmp[k].verdict);
-        draw_plot(plots_b[k],tb[k],vb[k],cmp[k].b,win_b_beg,win_b_end,lo_b,hi_b,view_signals[k],COLOR_B,cmp[k].verdict);
+        draw_plot(plots_a[k],ta[k],va[k],cmp[k].a,win_a_beg,win_a_end,lo_a,hi_a,view_signals[k],COLOR_A,cmp[k].verdict,off_a);
+        draw_plot(plots_b[k],tb[k],vb[k],cmp[k].b,win_b_beg,win_b_end,lo_b,hi_b,view_signals[k],COLOR_B,cmp[k].verdict,off_b);
     }
 
     // 一覧: 差が大きい順(判定の重さ → 倍率の大きい順)
@@ -530,6 +541,11 @@ void MainWindow::on_spinThreshold_valueChanged(double)
 }
 
 void MainWindow::on_checkBoxSameY_toggled(bool)
+{
+    update_view();
+}
+
+void MainWindow::on_checkBoxCenter_toggled(bool)
 {
     update_view();
 }
