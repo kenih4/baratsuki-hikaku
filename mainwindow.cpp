@@ -36,6 +36,20 @@ static QColor COLOR_B(200,90,0);        // オレンジ
 // 設定ファイルのディレクトリ。実行時の引数で指定されたときはそれ、なければ ~/.config/baratsuki-hikaku
 static QString g_config_dir;
 
+// 起動時の日時と時間幅(コマンドライン引数。main で設定する)
+static MainWindow::InitialPeriod g_initial_a,g_initial_b;
+static bool g_auto_get = false;
+
+void MainWindow::set_initial_period(bool is_b,const InitialPeriod &p)
+{
+    (is_b ? g_initial_b : g_initial_a) = p;
+}
+
+void MainWindow::set_auto_get(bool on)
+{
+    g_auto_get = on;
+}
+
 // 日時の文字列の形式(DB API に渡す形式でもある)
 static const char *DATE_FORMAT = "yyyy/MM/dd HH:mm:ss";
 
@@ -66,6 +80,17 @@ MainWindow::MainWindow(QWidget *parent)
         c->addItem(tr("day"),86400);
         c->setCurrentIndex(0);
     }
+    // コマンドライン引数で指定されたものを入れる(指定なしの項目は、上の既定のまま)
+    struct Target{const InitialPeriod *p;QDateTimeEdit *end;QSpinBox *width;QComboBox *unit;};
+    for(const Target &t : {Target{&g_initial_a,ui->dateTimeEditA,ui->spinWidthA,ui->comboUnitA},
+                           Target{&g_initial_b,ui->dateTimeEditB,ui->spinWidthB,ui->comboUnitB}}){
+        if(t.p->end.isValid())t.end->setDateTime(t.p->end);
+        int idx = t.unit->findData((qlonglong)t.p->unit_sec);
+        if(t.p->width>0 && idx>=0){
+            t.width->setValue(t.p->width);
+            t.unit->setCurrentIndex(idx);
+        }
+    }
 
     create_plot_area();
     create_result_table();
@@ -80,6 +105,7 @@ MainWindow::MainWindow(QWidget *parent)
     createStatusBar();
 
     QTimer::singleShot(0, this, SLOT(check_config_files()));
+    if(g_auto_get)QTimer::singleShot(0, ui->pushButtonGet, SLOT(click()));      // --get: 起動直後に取得する
 }
 
 void MainWindow::set_config_dir(const QString &dir)

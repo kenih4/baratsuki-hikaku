@@ -26,6 +26,14 @@ public:
     bool eventFilter(QObject *obj, QEvent *event) override;
     void create_tree();
     static void set_config_dir(const QString &dir);   // 設定ファイルのディレクトリ(既定は ~/.config/baratsuki-hikaku)を変える
+    // 起動時の日時と時間幅(コマンドライン引数)。end が無効、width が 0 のものは、指定なし(画面の既定のまま)
+    struct InitialPeriod{
+        QDateTime end;          // 期間の終端
+        int width = 0;          // 時間幅の数値
+        qint64 unit_sec = 0;    // 時間幅の単位(秒。60 = 分、3600 = 時間、86400 = 日)
+    };
+    static void set_initial_period(bool is_b,const InitialPeriod &p);   // is_b=false が A、true が B
+    static void set_auto_get(bool on);                // 起動直後に Get する
     QStringList load_group_list();      // 信号ツリーのグループ名(tree_groups.txt、無ければ既定)
 private slots:
     void on_pushButtonGet_clicked();        // 日時 A と B のデータを取得する

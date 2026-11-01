@@ -19,12 +19,14 @@ DEFINES += QT_DEPRECATED_WARNINGS
 SOURCES += \
     main.cpp \
     mainwindow.cpp \
+    period_args.cpp \
     qcustomplot.cpp \
     shot_data.cpp \
     variation.cpp
 
 HEADERS += \
     mainwindow.h \
+    period_args.h \
     qcustomplot.h \
     shot_data.h \
     variation.h

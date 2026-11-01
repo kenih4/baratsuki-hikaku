@@ -88,7 +88,9 @@
 
 | ファイル | 内容 |
 |---|---|
-| `main.cpp` | 起動。`setApplicationName("baratsuki-hikaku")`、`--config-dir` / 位置引数の処理 |
+| `main.cpp` | 起動。`setApplicationName("baratsuki-hikaku")`、コマンドライン引数の処理(下の「コマンドライン引数」) |
+| `period_args.h/.cpp` | 引数の日時・時間幅の文字列の解釈(`parse_period_time` / `parse_period_width`)。QtCore だけに依存 |
+| `tests/test_period_args.cpp` | `period_args.cpp` の単体試験(実行方法はファイル先頭のコメント) |
 | `mainwindow.h/.cpp/.ui` | 画面。操作欄(日時 A・B、時間幅、Now、Get、閾値、Y 軸をそろえる)、信号ツリー、信号リスト、信号ごとの左右のグラフ、差の一覧 |
 | `variation.h/.cpp` | バラつきの指標(個数・平均・σ・CV・中央値・MAD・IQR)と、A/B の比較・判定・Brown–Forsythe 検定。**Qt にも DB にも依存しない** |
 | `tests/test_variation.cpp` | `variation.cpp` の単体試験(実行方法はファイル先頭のコメント) |
@@ -118,6 +120,26 @@
 - 自動保存の CSV(`CSV_FILE` の固定パス)と、File → Save。`Shot_data::outfile()` は残してあるが、まだ使っていない
 - 設定ファイルの `signals.txt` のフラグ(`mean_label`)、`settings.ini` の `[LatestMean]` `[CrossColor]` `[Highlight]`
 
+### コマンドライン引数
+
+```bash
+baratsuki-hikaku [dir]                       # 設定ディレクトリ(位置引数)
+baratsuki-hikaku -c DIR | --config-dir DIR   # 同じ。両方の指定や 2 重指定はエラー
+baratsuki-hikaku -a "2026/11/01 09:00:00" --a-width 1h -b now --b-width 90m --get
+```
+
+| 引数 | 意味 | 指定しないとき |
+|---|---|---|
+| `-a, --a-time` | 期間 A の終端。`yyyy/MM/dd HH:mm[:ss]`、`yyyy-MM-dd HH:mm[:ss]`、`yyyy-MM-ddTHH:mm[:ss]`、`now`(ローカル時間) | 現在の 1 日前 |
+| `--a-width` | 期間 A の時間幅。数値 + `m` / `h` / `d`(単位なしは分)。`90`、`30m`、`2h`、`7d`、`1.5h`(= 90 分) | 60 分 |
+| `-b, --b-time` / `--b-width` | 期間 B(A と同じ形式) | 現在 / 60 分 |
+| `-g, --get` | 起動直後に Get する | しない(画面で押す) |
+
+- 読めない値(日付の誤り、0 以下、整数の分にならない、入力欄の上限 100000 を超える)は、画面を出さず、
+  メッセージを出して終了コード 1 で終わる。
+- 引数で指定した値は、画面の入力欄に入る(あとから画面で変えられる)。`--get` を付けなければ、DB は読まない。
+- `m.sh` は引数を渡さないので、引数付きで起動するときは、ビルドした実行ファイルを直接呼ぶ。
+
 ### 画面の動き(実装済み。実機では未確認)
 
 - `Get` → `fetch_shots`(A と B)→ `update_view`。`update_view` は DB を読まず、取得済みのデータから描き直す
@@ -141,6 +163,8 @@
   (`-Wall -Wextra`。出る警告は、元からある `qcustomplot.cpp` のものだけ)。
 - `variation.cpp` は、疑似データで単体試験済み(同じ分布 → 倍率 ≈ 1、σ を 3 倍 → 倍率 ≈ 3 で `LARGE`、
   逆向きも同じ倍率、平均だけずらす → 倍率 ≈ 1、データ不足・定数は `n/a`、NAN は無視)。
+- `period_args.cpp` も単体試験済み。`main.cpp` の引数処理は、画面の無いスタブ(`MainWindow` を差し替え、
+  `QCoreApplication` で動かす)に付けて、正常・エラーの各場合の動きを確かめた。本物の起動は未確認。
   Brown–Forsythe の p 値は、数値積分による独立計算と 8 桁一致した。ASan / UBSan でも問題なし。
 - リンクは、この WSL に GUI 用ライブラリ(`QWidgetEXPlugin`、`MessageQueue`、`graphwidgetplugin`)が無いため失敗する
   (元のコードでも同じ)。このコードはそれらを使っていないので、3 つを除いて手でリンクすると、実行ファイルはできる。
