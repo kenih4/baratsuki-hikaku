@@ -20,12 +20,14 @@ SOURCES += \
     main.cpp \
     mainwindow.cpp \
     qcustomplot.cpp \
-    shot_data.cpp
+    shot_data.cpp \
+    variation.cpp
 
 HEADERS += \
     mainwindow.h \
     qcustomplot.h \
-    shot_data.h
+    shot_data.h \
+    variation.h
 
 FORMS += \
     mainwindow.ui

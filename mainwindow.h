@@ -7,7 +7,9 @@
 #include <QGridLayout>
 #include <QRegularExpression>
 #include <QDateTime>
+#include <QTableWidget>
 #include "shot_data.h"
+#include "variation.h"
 #include "qcustomplot.h"
 
 QT_BEGIN_NAMESPACE
@@ -31,6 +33,9 @@ private slots:
     void on_pushButtonNowB_clicked();
     void on_treeWidget_itemDoubleClicked(QTreeWidgetItem *item, int column);
     void on_pushButtonDelete_clicked();
+    void on_spinThreshold_valueChanged(double value);     // 閾値が変わったら、判定だけ描き直す
+    void on_checkBoxSameY_toggled(bool checked);
+    void result_row_activated(int row,int column);        // 一覧の行をダブルクリックで、その信号のグラフへスクロール
 
     void show_tag_offset();     // File メニューの Tag Offset...(sacla_tag, sr_tag のオフセット)
     void check_config_files();  // 起動時に設定ファイルの有無を確認して警告する
@@ -58,9 +63,27 @@ private:
     QScrollArea *plot_scroll = nullptr;
     QWidget *plot_container = nullptr;
     QGridLayout *plot_grid = nullptr;
-    int plot_row_h = 230;               // 1 行の高さ(スクロール領域の見える高さの 1/3)
+    int plot_row_h = 170;               // 1 行の高さ(スクロール領域の見える高さの 1/3)
     QVector<QCustomPlot*> plots_a;      // 左列(日時 A)
     QVector<QCustomPlot*> plots_b;      // 右列(日時 B)
+
+    // 取得済みのデータから、グラフ・一覧・通知を描き直す(DB は読まない)
+    void update_view();
+    void load_difference_settings();    // settings.ini の [Difference] から閾値などを読む
+    void create_result_table();
+    struct PlotItems{
+        QCPItemText *text = nullptr;    // 左上の注記(個数・平均・標準偏差)。1 つ作って使い回す
+        QCPItemRect *band = nullptr;    // 平均 ± 標準偏差の帯
+    };
+    QMap<QCustomPlot*,PlotItems> plot_items;
+    void draw_plot(QCustomPlot *plot,const QVector<double> &t,const QVector<double> &v,const VarStats &st,
+                   double xbeg,double xend,double ylo,double yhi,const QString &signal,
+                   const QColor &color,VarVerdict verdict);
+    QTableWidget *result_table = nullptr;
+    QStringList view_signals;           // 最後に Get したときの信号(行の順)
+    double win_a_beg = 0,win_a_end = 0; // 日時 A・B の期間(エポック秒)
+    double win_b_beg = 0,win_b_end = 0;
+    VarParams var_params;               // 閾値は画面の値。有意水準と最小個数は settings.ini
 
     long long tag_off_sacla = 0;        // sacla_tag のオフセット(既定0)。A と B で共通
     long long tag_off_sr = 0;           // sr_tag のオフセット(既定0)

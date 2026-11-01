@@ -12,6 +12,10 @@
 #include <QMenu>
 #include <QSpinBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QCheckBox>
+#include <QTableWidget>
+#include <QHeaderView>
 #include <QFormLayout>
 #include <QDialogButtonBox>
 #include <QPushButton>
@@ -64,6 +68,8 @@ MainWindow::MainWindow(QWidget *parent)
     }
 
     create_plot_area();
+    create_result_table();
+    load_difference_settings();
 
     load_signal_list(ui->listWidget,"signals.txt");
     // listWidget が変更されたら信号リストファイルに保存する
@@ -286,16 +292,271 @@ void MainWindow::on_pushButtonGet_clicked()
         cerr << "[tag] NOTE: tag offset is specified (sacla_tag" << showpos << tag_off_sacla
              << ", sr_tag" << tag_off_sr << noshowpos << "). Values are matched with tag+offset." << endl;
     }
+    const QDateTime end_a = ui->dateTimeEditA->dateTime(),end_b = ui->dateTimeEditB->dateTime();
+    const qint64 width_a = width_seconds(ui->spinWidthA,ui->comboUnitA),width_b = width_seconds(ui->spinWidthB,ui->comboUnitB);
     QApplication::setOverrideCursor(Qt::WaitCursor);
     delete data_a;
     delete data_b;
-    data_a = fetch_shots(ui->dateTimeEditA->dateTime(),width_seconds(ui->spinWidthA,ui->comboUnitA));
-    data_b = fetch_shots(ui->dateTimeEditB->dateTime(),width_seconds(ui->spinWidthB,ui->comboUnitB));
+    data_a = fetch_shots(end_a,width_a);
+    data_b = fetch_shots(end_b,width_b);
     QApplication::restoreOverrideCursor();
 
-    ensure_plot_rows(ui->listWidget->count());
+    // 表示に使う信号と期間は、Get した時点のものを覚えておく(あとでリストを変えても、行がずれないように)
+    view_signals.clear();
+    for(int i=0;i<ui->listWidget->count();++i)view_signals << ui->listWidget->item(i)->text();
+    win_a_end = end_a.toMSecsSinceEpoch()/1000.0;
+    win_a_beg = win_a_end - width_a;
+    win_b_end = end_b.toMSecsSinceEpoch()/1000.0;
+    win_b_beg = win_b_end - width_b;
+
+    ensure_plot_rows(view_signals.size());
     fit_row_height();
-    statusBar()->showMessage(tr("A: %1 shots, B: %2 shots").arg(data_a->data_size()).arg(data_b->data_size()));
+    update_view();
+}
+
+// 時刻の文字列(DB API が返す形式)をエポック秒にする。読めなければ NAN
+static double shot_time(const string &s)
+{
+    QString q = QString::fromStdString(s);
+    QDateTime dt = QDateTime::fromString(q,"yyyy/MM/dd HH:mm:ss.z");
+    if(!dt.isValid())dt = QDateTime::fromString(q.left(19),"yyyy/MM/dd HH:mm:ss");
+    return dt.isValid() ? dt.toMSecsSinceEpoch()/1000.0 : NAN;
+}
+
+// 1 信号ぶんの値を集める。値が取れていないショット(NAN)は入れない。
+//   vals : 統計用の値(時刻が読めないショットも含む)
+//   t, v : グラフ用の(時刻, 値)
+static void collect_series(Shot_data *d,const string &name,std::vector<double> &vals,QVector<double> &t,QVector<double> &v)
+{
+    for(int i=0;i<d->data_size();i++){
+        double x = d->value(name,i);
+        if(!std::isfinite(x))continue;
+        vals.push_back(x);
+        double tm = shot_time(d->endtime(i));
+        if(std::isfinite(tm)){t.append(tm);v.append(x);}
+    }
+}
+
+// 値の最小・最大(有限な値だけ)。1 つも無ければ false
+static bool value_range(const std::vector<double> &vals,double &lo,double &hi)
+{
+    bool ok = false;
+    for(double x : vals){
+        if(!std::isfinite(x))continue;
+        if(!ok){lo = hi = x;ok = true;}
+        else{lo = std::min(lo,x);hi = std::max(hi,x);}
+    }
+    return ok;
+}
+
+// 1 つのグラフ(信号 1 つ・期間 1 つ)を描く。
+//   平均 ± 標準偏差の帯と、左上の注記を重ね、判定に応じて背景に色を付ける
+void MainWindow::draw_plot(QCustomPlot *plot,const QVector<double> &t,const QVector<double> &v,const VarStats &st,
+                           double xbeg,double xend,double ylo,double yhi,const QString &signal,
+                           const QColor &color,VarVerdict verdict)
+{
+    plot->graph(0)->setData(t,v);
+    plot->xAxis->setRange(xbeg,xend);
+    plot->yAxis->setRange(ylo,yhi);
+    QFont lf = font();
+    lf.setPointSize(7);
+    plot->yAxis->setLabelFont(lf);
+    plot->yAxis->setLabel(signal);
+
+    QColor bg = Qt::white;
+    if(verdict==VAR_LARGE)bg = QColor(255,226,226);         // 差が大きい: 薄い赤
+    else if(verdict==VAR_LARGE_NS)bg = QColor(255,243,210); // 大きいが有意でない: 薄い黄
+    plot->setBackground(QBrush(bg));
+
+    PlotItems &it = plot_items[plot];
+    if(!it.band){
+        it.band = new QCPItemRect(plot);
+        it.band->setPen(Qt::NoPen);
+        it.band->setLayer("grid");          // 点(main)の下に描く
+        it.band->topLeft->setTypeX(QCPItemPosition::ptAxisRectRatio);
+        it.band->topLeft->setTypeY(QCPItemPosition::ptPlotCoords);
+        it.band->bottomRight->setTypeX(QCPItemPosition::ptAxisRectRatio);
+        it.band->bottomRight->setTypeY(QCPItemPosition::ptPlotCoords);
+    }
+    bool has_band = st.n>=2 && std::isfinite(st.sd);
+    if(has_band){
+        QColor bc = color;
+        bc.setAlpha(45);
+        it.band->setBrush(QBrush(bc));
+        it.band->topLeft->setCoords(0,st.mean+st.sd);
+        it.band->bottomRight->setCoords(1,st.mean-st.sd);
+    }
+    it.band->setVisible(has_band);
+
+    if(!it.text){
+        it.text = new QCPItemText(plot);        // 注記は 1 つ作って使い回す(描くたびに作ると重なる)
+        it.text->setPositionAlignment(Qt::AlignTop|Qt::AlignLeft);
+        it.text->position->setType(QCPItemPosition::ptAxisRectRatio);
+        it.text->position->setCoords(0.01,0.01);
+        it.text->setPen(Qt::NoPen);
+        it.text->setBrush(QBrush(QColor(255,255,255,200)));
+        QFont tf = font();
+        tf.setPointSize(8);
+        it.text->setFont(tf);
+    }
+    it.text->setText(st.n==0 ? tr("no data")
+                             : tr("n=%1  mean=%2  sd=%3").arg(st.n).arg(st.mean,0,'g',5).arg(st.sd,0,'g',4));
+    plot->replot(QCustomPlot::rpQueuedReplot);
+}
+
+// 取得済みのデータから、グラフ・一覧・通知を描き直す(DB は読まない)。
+// Get のあと、閾値や Y 軸の設定を変えたときにも呼ぶ。
+void MainWindow::update_view()
+{
+    if(!data_a || !data_b)return;
+    const int n = view_signals.size();
+    var_params.threshold = ui->spinThreshold->value();
+    const bool same_y = ui->checkBoxSameY->isChecked();
+
+    std::vector<VarCompare> cmp(n);
+    std::vector<std::vector<double>> sa(n),sb(n);
+    QVector<QVector<double>> ta(n),va(n),tb(n),vb(n);
+    for(int i=0;i<n;i++){
+        const string name = view_signals[i].toStdString();
+        collect_series(data_a,name,sa[i],ta[i],va[i]);
+        collect_series(data_b,name,sb[i],tb[i],vb[i]);
+        cmp[i] = var_compare(sa[i],sb[i],var_params);
+    }
+
+    for(int k=0;k<plots_a.size();k++){
+        bool show = k<n;
+        plots_a[k]->setVisible(show);
+        plots_b[k]->setVisible(show);
+        if(!show)continue;
+        // 縦軸の範囲: 同じ行の A と B はそろえる(そろえないと、バラつきの大小が見た目で比べられない)
+        double lo_a = 0,hi_a = 1,lo_b = 0,hi_b = 1;
+        bool ok_a = value_range(sa[k],lo_a,hi_a),ok_b = value_range(sb[k],lo_b,hi_b);
+        if(same_y && ok_a && ok_b){
+            lo_a = lo_b = std::min(lo_a,lo_b);
+            hi_a = hi_b = std::max(hi_a,hi_b);
+        }
+        auto pad = [](double &lo,double &hi){
+            double d = (hi-lo)*0.1;
+            if(!(d>0))d = std::max(std::fabs(lo)*0.05,1.0);     // 値がすべて同じとき
+            lo -= d;hi += d;
+        };
+        if(ok_a)pad(lo_a,hi_a);
+        if(ok_b)pad(lo_b,hi_b);
+        draw_plot(plots_a[k],ta[k],va[k],cmp[k].a,win_a_beg,win_a_end,lo_a,hi_a,view_signals[k],COLOR_A,cmp[k].verdict);
+        draw_plot(plots_b[k],tb[k],vb[k],cmp[k].b,win_b_beg,win_b_end,lo_b,hi_b,view_signals[k],COLOR_B,cmp[k].verdict);
+    }
+
+    // 一覧: 差が大きい順(判定の重さ → 倍率の大きい順)
+    std::vector<int> order(n);
+    for(int i=0;i<n;i++)order[i] = i;
+    std::stable_sort(order.begin(),order.end(),[&cmp](int x,int y){
+        if(cmp[x].verdict!=cmp[y].verdict)return cmp[x].verdict<cmp[y].verdict;
+        double fx = std::isfinite(cmp[x].fold) ? cmp[x].fold : -1;
+        double fy = std::isfinite(cmp[y].fold) ? cmp[y].fold : -1;
+        return fx>fy;
+    });
+    auto num = [](double v,int prec)->QTableWidgetItem*{
+        QTableWidgetItem *it = new QTableWidgetItem;
+        if(std::isfinite(v))it->setText(QString::number(v,'g',prec));
+        it->setTextAlignment(Qt::AlignRight|Qt::AlignVCenter);
+        return it;
+    };
+    result_table->setRowCount(n);
+    int n_large = 0,n_ns = 0;
+    for(int r=0;r<n;r++){
+        int i = order[r];
+        const VarCompare &c = cmp[i];
+        QString verdict;
+        QColor bg = Qt::white;
+        switch(c.verdict){
+        case VAR_LARGE:        verdict = tr("LARGE");n_large++;bg = QColor(255,226,226);break;
+        case VAR_LARGE_NS:     verdict = tr("large (not significant)");n_ns++;bg = QColor(255,243,210);break;
+        case VAR_SAME:         verdict = tr("-");break;
+        case VAR_UNDETERMINED: verdict = tr("n/a: %1").arg(c.note);bg = QColor(235,235,235);break;
+        }
+        QTableWidgetItem *name = new QTableWidgetItem(view_signals[i]);
+        name->setData(Qt::UserRole,i);              // グラフの行
+        QTableWidgetItem *items[] = {
+            name,
+            num(c.a.n,6),num(c.a.sd,4),num(c.b.n,6),num(c.b.sd,4),
+            num(c.ratio,3),num(c.fold,3),num(c.iqr_ratio,3),num(c.cv_ratio,3),num(c.pval,3),
+            new QTableWidgetItem(verdict)
+        };
+        for(int col=0;col<11;col++){
+            items[col]->setBackground(bg);
+            result_table->setItem(r,col,items[col]);
+        }
+    }
+    result_table->resizeColumnsToContents();
+    result_table->horizontalHeader()->setStretchLastSection(true);
+
+    // 知らせる: ステータスバーとウィンドウタイトル
+    QString msg = tr("A: %1 shots, B: %2 shots  |  %3 signal(s) with large difference (fold >= %4)")
+            .arg(data_a->data_size()).arg(data_b->data_size()).arg(n_large).arg(var_params.threshold);
+    if(n_ns>0)msg += tr(", %1 more large but not significant").arg(n_ns);
+    statusBar()->showMessage(msg);
+    setWindowTitle(n_large>0 ? tr("[%1 large] baratsuki-hikaku").arg(n_large) : QString("baratsuki-hikaku"));
+}
+
+void MainWindow::on_spinThreshold_valueChanged(double)
+{
+    update_view();
+}
+
+void MainWindow::on_checkBoxSameY_toggled(bool)
+{
+    update_view();
+}
+
+// 差の一覧を作る。列: 信号、A・B それぞれの個数と標準偏差、標準偏差の比と倍率、
+// 参考値(四分位範囲の比、変動係数の比)、検定の p 値、判定
+void MainWindow::create_result_table()
+{
+    result_table = new QTableWidget(0,11,ui->centralwidget);
+    result_table->setHorizontalHeaderLabels(QStringList()
+        << "Signal" << "nA" << "sd A" << "nB" << "sd B"
+        << "sd B/A" << "Fold" << "IQR B/A" << "CV B/A" << "p" << "Verdict");
+    result_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    result_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    result_table->verticalHeader()->setVisible(false);
+    result_table->setMinimumHeight(110);
+    result_table->setToolTip(tr("Double-click a row to jump to its graphs.\n"
+                                "Fold = max(sd B/sd A, sd A/sd B). p: Brown-Forsythe test for equal variance."));
+    connect(result_table,&QTableWidget::cellDoubleClicked,this,&MainWindow::result_row_activated);
+    ui->verticalLayout_plots->addWidget(result_table);
+}
+
+void MainWindow::result_row_activated(int row,int)
+{
+    QTableWidgetItem *it = result_table->item(row,0);
+    if(!it)return;
+    int idx = it->data(Qt::UserRole).toInt();
+    if(idx>=0 && idx<plots_a.size())plot_scroll->ensureWidgetVisible(plots_a[idx],0,20);
+}
+
+// settings.ini の [Difference] から、差が大きいとする倍率などを読む(無い/不正なときは既定)。
+//   [Difference]
+//   ratio=2.0         ; 標準偏差の比(大きいほう/小さいほう)がこの値以上なら「差が大きい」。画面の値の初期値
+//   alpha=0.05        ; 等分散の検定の有意水準。これ未満の p 値なら「有意」
+//   min_shots=5       ; A・B のどちらかの個数がこれ未満の信号は、判定しない
+void MainWindow::load_difference_settings()
+{
+    double ratio = 2.0;
+    QFileInfo fi(signal_list_file("settings.ini"));
+    if(fi.exists()){
+        QSettings st(fi.absoluteFilePath(),QSettings::IniFormat);
+        bool ok = false;
+        double r = ini_string(st,"Difference/ratio","").toDouble(&ok);
+        if(ok && r>=1 && r<=1000)ratio = r;
+        else if(st.contains("Difference/ratio"))cerr << "WARNING: settings.ini Difference/ratio must be 1 to 1000; using 2" << endl;
+        double al = ini_string(st,"Difference/alpha","").toDouble(&ok);
+        if(ok && al>0 && al<1)var_params.alpha = al;
+        else if(st.contains("Difference/alpha"))cerr << "WARNING: settings.ini Difference/alpha must be between 0 and 1; using 0.05" << endl;
+        int mn = ini_string(st,"Difference/min_shots","").toInt(&ok);
+        if(ok && mn>=2 && mn<=100000)var_params.min_n = mn;
+        else if(st.contains("Difference/min_shots"))cerr << "WARNING: settings.ini Difference/min_shots must be 2 to 100000; using 5" << endl;
+    }
+    ui->spinThreshold->setValue(ratio);
 }
 
 void MainWindow::on_pushButtonNowA_clicked()
@@ -316,7 +577,7 @@ void MainWindow::check_config_files()
     const Item items[] = {
         {"signals.txt",             "信号リスト(無ければ空。ツリーから追加)"},
         {"tree_groups.txt",         "信号ツリーのグループ名(既定の14グループを使用)"},
-        {"settings.ini",            "日時 A・B のグラフの色(既定の色を使用)"},
+        {"settings.ini",            "日時 A・B のグラフの色、差が大きいとする倍率など(既定の色、2 倍を使用)"},
     };
     QStringList missing;
     for(const Item &it : items){
