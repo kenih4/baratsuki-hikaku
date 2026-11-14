@@ -54,8 +54,10 @@
 - 取得結果は必ず `free()` / 解放関数で解放(TECH_NOTES §3-6)。
 - 取得は A と B で同じ信号リストを使う。片方に無い信号は、その旨を表示する。
 - **注意(性能)**: 1 ショットごとに DB への問い合わせが数回走る。時間幅 1 時間のショット数は未確認で、
-  多いと取得に時間がかかる。実機で件数と所要時間を測り、必要なら進捗表示・キャンセル・間引きを入れる。
-  DB 取得中に GUI が固まらないようにすることも検討する(A と B の取得は独立)。
+  多いと取得に時間がかかる。実機で件数と所要時間を測り、必要なら間引きを入れる。
+  **進捗表示とキャンセルは実装済み**(§3 の「Get の進捗」)。取得は GUI スレッドで行う(DB API がスレッド安全か不明なため、
+  スレッドは使っていない)。進捗の通知のたびに画面のイベントを処理するので、画面は固まらない。
+  ただし、1 回の DB 問い合わせの最中(特に最初の検索)は、画面が応答しない。
 - タグのオフセット(`sacla_tag`/`sr_tag` に足す値)も、元のとおり残す。
 
 ### 2-3. バラつきの指標と「差が大きい」の判定
@@ -110,7 +112,8 @@
 | `mainwindow.h/.cpp/.ui` | 画面。操作欄(日時 A・B、時間幅、Now、Get、閾値、Y 軸をそろえる)、信号ツリー、信号リスト、信号ごとの左右のグラフ、差の一覧 |
 | `variation.h/.cpp` | バラつきの指標(個数・平均・σ・CV・中央値・MAD・IQR)と、A/B の比較・判定・Brown–Forsythe 検定、相関(`pearson_r` / `spearman_rho`)。**Qt にも DB にも依存しない** |
 | `tests/test_variation.cpp` | `variation.cpp` の単体試験(実行方法はファイル先頭のコメント) |
-| `shot_data.h/.cpp` | データ取得層 `Shot_data`(旧 `Corr_data`)。タグ決定 `get_tag(beg,end)`、値の取得 `db_get_sync_data`、`value()`、`get_range()`、`detrend()`、`outfile()` |
+| `shot_data.h/.cpp` | データ取得層 `Shot_data`(旧 `Corr_data`)。タグ決定 `get_tag(beg,end)`、値の取得 `db_get_sync_data`、進捗の通知とキャンセル `set_progress` / `canceled`、`value()`、`get_range()`、`detrend()`、`outfile()` |
+| `tests/test_shot_data_progress.cpp` + `tests/stub_db.cpp` | `Shot_data` の進捗・キャンセルの試験。DB は代用関数(`stub_db.cpp`)に差し替える。実行方法はファイル先頭のコメント |
 | `qcustomplot.cpp/.h` | QCustomPlot 2.1.0(Qt 6 対応済み)。**触らない** |
 | `figures.qrc` + `abcicon.png` | アイコン(PNG を埋め込み) |
 | `baratsuki-hikaku.pro` | ビルド定義 |
@@ -158,7 +161,7 @@ baratsuki-hikaku -a "2026/11/01 09:00:00" --a-width 1h -b now --b-width 90m --ge
 
 ### 画面の動き(実装済み。実機では未確認)
 
-- `Get` → `fetch_shots`(A と B)→ `update_view`。`update_view` は DB を読まず、取得済みのデータから描き直す
+- `Get` → 進捗ダイアログ → `fetch_shots`(A と B)→ `update_view`。`update_view` は DB を読まず、取得済みのデータから描き直す
   (閾値・Y 軸の表示を変えたときも、これだけ呼ぶ)。
 - 信号ごとに 1 行、4 列(A のトレンド | A の散布図 | B のトレンド | B の散布図)。トレンドの点は(ショットの終了時刻, 値)。
   平均 ± σ の薄い帯と、左上に `n / mean / sd`。散布図は §2-4。
@@ -176,6 +179,15 @@ baratsuki-hikaku -a "2026/11/01 09:00:00" --a-width 1h -b now --b-width 90m --ge
   注記の `mean=` は本当の値のまま。縦軸ラベルに `(- mean)` が付く。
   実装は `update_view` の `center`(Center のとき真)と `same_y`(Independent 以外で真)。
   以前は「Same Y range」と「Center」の 2 つのチェックボックスだったものを、排他的な 3 択にまとめた。
+- **Get の進捗**(`QProgressDialog`。取得中は他の操作を止める):
+  - 全部で 4 段階: ① A のショットとタグの決定 ② A の信号値の取得 ③ B のタグの決定 ④ B の信号値の取得。
+  - 表示: `Period A: reading the signal values (step 2 of 4)`、`120 / 450 shots (26%)`、経過時間。
+    ショットの総数が分かる前(最初の検索中)は、終わりが分からない動き続ける帯と `searching the shots...`。
+  - **Cancel で打ち切れる**。打ち切ったときは、新しいデータを捨てて、**前のデータをそのまま残す**
+    (ステータスバーに `Get canceled`)。完了したら、ステータスバーの最後に `fetched in N s` を出す。
+  - 仕組み: `Shot_data::set_progress(std::function<bool(stage,done,total)>)`。`get_tag` と `db_get_sync_data` が、
+    ショットを 1 つ処理するたびに呼ぶ。`false` を返すとそこで打ち切り、`canceled()` が真になる。
+    stage: 0 = タグ、1 = 値。
 - 下の一覧は、差が大きい順(判定 → 倍率)。行のダブルクリックで、その信号のグラフへスクロール。
 - Get した時点の信号リストと期間を覚えている(`view_signals`、`win_*`)ので、あとでリストを変えても行はずれない。
 
@@ -194,6 +206,9 @@ baratsuki-hikaku -a "2026/11/01 09:00:00" --a-width 1h -b now --b-width 90m --ge
   逆向きも同じ倍率、平均だけずらす → 倍率 ≈ 1、データ不足・定数は `n/a`、NAN は無視)。
   相関も同じ試験で確認済み(直線 → r, rho ≈ 1、放物線 → 両方 ≈ 0、単調な指数関数 → rho = 1 で r は小さい、
   符号が負なら −1、定数・2 組以下は NAN、同順位は手計算と一致)。
+- `Shot_data` の進捗・キャンセルは、DB を代用関数に差し替えた試験で確認済み(通知の順序と回数、各段階でのキャンセル、
+  キャンセル後に DB を呼ばないこと、メモリリークなし。ASan / UBSan)。**画面の進捗ダイアログ自体は未確認**。
+  代用関数の構造体は、**使う DB のヘッダの版(Thrift 版)と同じ並び**にすること(別の版は並びが違う)。
 - `period_args.cpp` も単体試験済み。`main.cpp` の引数処理は、画面の無いスタブ(`MainWindow` を差し替え、
   `QCoreApplication` で動かす)に付けて、正常・エラーの各場合の動きを確かめた。本物の起動は未確認。
   Brown–Forsythe の p 値は、数値積分による独立計算と 8 桁一致した。ASan / UBSan でも問題なし。

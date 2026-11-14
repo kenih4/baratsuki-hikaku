@@ -8,6 +8,7 @@
 #include "db_common.h"
 #include <cstdlib>
 #include <cmath>
+#include <functional>
 
 using namespace std;
 
@@ -44,6 +45,13 @@ class Shot_data
 public:
     Shot_data();
     ~Shot_data();
+    // 進捗の通知。get_tag と db_get_sync_data が、ショットを 1 つ処理するたびに呼ぶ。
+    //   stage : 0 = ショットのタグを決めている、1 = 各信号の値を取得している
+    //   done / total : 処理したショット数 / ショットの総数。total=0 は、総数がまだ分からない(検索中)
+    //   戻り値 : false を返すと、そこで取得を打ち切る(canceled() が真になる)
+    typedef std::function<bool(int stage,int done,int total)> Progress;
+    void set_progress(Progress p){progress = p;};
+    bool canceled() const {return canceled_;};      // 途中で打ち切られた。データは不完全なので使わない
     // begtime ~ endtime("yyyy/MM/dd HH:mm:ss")の範囲のショットを探して、タグを決める。
     // タグが見つからなかったショット(route 信号に idata==769 が無い)は除く
     void get_tag(string begtime,string endtime);
@@ -81,6 +89,14 @@ public:
     static void detrend(double *v,int n);
     void outfile(string);
 private:
+    Progress progress;
+    bool canceled_ = false;
+    // 進捗を通知する。続けてよければ true、打ち切るなら false
+    bool report(int stage,int done,int total){
+        if(!progress)return true;
+        if(!progress(stage,done,total)){canceled_ = true;return false;}
+        return true;
+    };
     vector <Signal_param> sig;
     vector<Data> data;
     string empty_name;

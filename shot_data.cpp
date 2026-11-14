@@ -51,9 +51,15 @@ void Shot_data::get_tag(string begtime,string endtime)
     uint64_t btime;
 
     data.clear();
+    if(!report(0,0,0))return;       // 総数はまだ分からない(ショットを検索中)
     status = db_get_data_f(sep5u.c_str(),begtime.c_str(),endtime.c_str(),&get_inf_sep5u,&get_inf_cnt_sep5u);
     if(status==0 && get_inf_cnt_sep5u>0){
         data.resize(get_inf_cnt_sep5u);
+        if(!report(0,0,get_inf_cnt_sep5u)){
+            free(get_inf_sep5u);
+            data.clear();
+            return;
+        }
         for(int i=0;i<get_inf_cnt_sep5u;i++){
             DLOG<<(get_inf_sep5u+i)->evno << "  " << (get_inf_sep5u+i)->tdata<<endl;
             db_unixtime_us_to_date((get_inf_sep5u+i)->unixtime_us,out);
@@ -85,6 +91,7 @@ void Shot_data::get_tag(string begtime,string endtime)
             log_tag((get_inf_sep5u+i)->evno,data[i],
                     data[i].sacla_tag==0 ? "(route 769 not found)" : (data[i].sr_tag==0 ? "(sr_tag not found)" : ""),
                     off_sacla,off_sr);
+            if(!report(0,i+1,get_inf_cnt_sep5u))break;       // 打ち切り(後始末は下で行う)
         }
         free(get_inf_sep5u);
     }
@@ -114,7 +121,12 @@ void Shot_data::db_get_sync_data()
         }
     }
     DLOG<<"num_siglist  =  "<<siglist.num_signal<<endl;
-    for(int n=0;n<(int)data.size();n++){
+    const int total = (int)data.size();
+    if(!report(1,0,total)){
+        db_release_signal_list_all(&siglist);
+        return;
+    }
+    for(int n=0;n<total;n++){
         status = db_get_data_multi(&siglist,data[n].beg_time.c_str(),data[n].end_time.c_str(),1,0);
         if(status == 0){
             for(int i=0;i<(int)sig.size();i++){
@@ -136,6 +148,7 @@ void Shot_data::db_get_sync_data()
                 }
             }
         }
+        if(!report(1,n+1,total))break;       // 打ち切り(後始末は下で行う)
     }
     db_release_signal_list_all(&siglist);
 }

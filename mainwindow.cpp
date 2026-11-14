@@ -328,16 +328,35 @@ qint64 MainWindow::width_seconds(QSpinBox *spin,QComboBox *unit) const
     return (qint64)spin->value() * unit->currentData().toLongLong();
 }
 
-Shot_data *MainWindow::fetch_shots(const QDateTime &end,qint64 width_sec)
+Shot_data *MainWindow::fetch_shots(const QDateTime &end,qint64 width_sec,const QString &label,int step_base,
+                                   QProgressDialog *prog,const QElapsedTimer &timer)
 {
     Shot_data *d = new Shot_data;
+    // 進捗の表示。取得は GUI スレッドで行うので、通知のたびに画面のイベントを処理して、固まらないようにする。
+    // 全部で 4 段階: A のタグ決定、A の値の取得、B のタグ決定、B の値の取得
+    d->set_progress([prog,&timer,label,step_base](int stage,int done,int total)->bool{
+        QString what = stage==0 ? QObject::tr("finding the shots and their tags") : QObject::tr("reading the signal values");
+        QString text = QObject::tr("Period %1: %2   (step %3 of 4)").arg(label).arg(what).arg(step_base+stage+1);
+        if(total>0){
+            text += QObject::tr("\n%1 / %2 shots  (%3%)").arg(done).arg(total).arg(100*done/total);
+        }else{
+            text += QObject::tr("\nsearching the shots...");       // 総数がまだ分からない
+        }
+        text += QObject::tr("\nelapsed %1 s").arg(timer.elapsed()/1000.0,0,'f',1);
+        prog->setLabelText(text);
+        prog->setMaximum(total);                // 0 のときは、終わりが分からない表示(動き続ける帯)
+        prog->setValue(total>0 ? done : 0);
+        QCoreApplication::processEvents();      // Cancel ボタンなどの操作を受け付ける
+        return !prog->wasCanceled();
+    });
     d->set_tag_offset(tag_off_sacla,tag_off_sr);
     for(int i= 0;i<ui->listWidget->count();++i){
         d->add_signal(ui->listWidget->item(i)->text().toStdString());
     }
     d->get_tag(end.addSecs(-width_sec).toString(DATE_FORMAT).toStdString(),
                end.toString(DATE_FORMAT).toStdString());
-    d->db_get_sync_data();
+    if(!d->canceled())d->db_get_sync_data();
+    d->set_progress(nullptr);       // prog と timer はこの関数の外では使えないので、通知は外す
     return d;
 }
 
@@ -353,12 +372,33 @@ void MainWindow::on_pushButtonGet_clicked()
     }
     const QDateTime end_a = ui->dateTimeEditA->dateTime(),end_b = ui->dateTimeEditB->dateTime();
     const qint64 width_a = width_seconds(ui->spinWidthA,ui->comboUnitA),width_b = width_seconds(ui->spinWidthB,ui->comboUnitB);
-    QApplication::setOverrideCursor(Qt::WaitCursor);
+
+    // 取得中の進捗を出す(操作は止める。Cancel で打ち切れる)
+    QProgressDialog prog(tr("Preparing..."),tr("Cancel"),0,0,this);
+    prog.setWindowTitle(tr("Get"));
+    prog.setWindowModality(Qt::WindowModal);
+    prog.setMinimumDuration(0);
+    prog.setAutoClose(false);
+    prog.setAutoReset(false);
+    prog.setMinimumWidth(420);
+    prog.show();
+    QCoreApplication::processEvents();
+    QElapsedTimer timer;
+    timer.start();
+    // 取得できてから、前のデータと入れ替える(打ち切ったときは、前のデータをそのまま残す)
+    Shot_data *new_a = fetch_shots(end_a,width_a,"A",0,&prog,timer);
+    Shot_data *new_b = new_a->canceled() ? nullptr : fetch_shots(end_b,width_b,"B",2,&prog,timer);
+    prog.close();
+    if(new_a->canceled() || !new_b || new_b->canceled()){
+        delete new_a;
+        delete new_b;
+        statusBar()->showMessage(tr("Get canceled (the previous data is kept)"));
+        return;
+    }
     delete data_a;
     delete data_b;
-    data_a = fetch_shots(end_a,width_a);
-    data_b = fetch_shots(end_b,width_b);
-    QApplication::restoreOverrideCursor();
+    data_a = new_a;
+    data_b = new_b;
 
     // 表示に使う信号と期間は、Get した時点のものを覚えておく(あとでリストを変えても、行がずれないように)
     view_signals.clear();
@@ -371,6 +411,7 @@ void MainWindow::on_pushButtonGet_clicked()
     ensure_plot_rows(view_signals.size());
     fit_row_height();
     update_view();
+    statusBar()->showMessage(statusBar()->currentMessage() + tr("  |  fetched in %1 s").arg(timer.elapsed()/1000.0,0,'f',1));
 }
 
 // 時刻の文字列(DB API が返す形式)をエポック秒にする。読めなければ NAN

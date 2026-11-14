@@ -8,6 +8,8 @@
 #include <QRegularExpression>
 #include <QDateTime>
 #include <QTableWidget>
+#include <QProgressDialog>
+#include <QElapsedTimer>
 #include "shot_data.h"
 #include "variation.h"
 #include "qcustomplot.h"
@@ -66,7 +68,10 @@ private:
     // 時間幅の入力(数値 + 単位)を秒にする
     qint64 width_seconds(QSpinBox *spin,QComboBox *unit) const;
     // end を終端とする width_sec 秒の範囲のショットを取得する(リストの全信号)。呼び出し側が delete する
-    Shot_data *fetch_shots(const QDateTime &end,qint64 width_sec);
+    // 進捗は prog に出し、Cancel が押されたら打ち切る(戻り値の canceled() が真。データは使わない)。
+    //   label : 期間の名前("A" / "B")、step_base : これまでに済んだ段階の数(A は 0、B は 2。全部で 4 段階)
+    Shot_data *fetch_shots(const QDateTime &end,qint64 width_sec,const QString &label,int step_base,
+                           QProgressDialog *prog,const QElapsedTimer &timer);
 
     // 信号ごとの行に、A(左)と B(右)のグラフを並べるスクロール領域
     void create_plot_area();
