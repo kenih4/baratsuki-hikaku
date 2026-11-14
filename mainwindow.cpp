@@ -61,11 +61,18 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
     // ラジオボタンの組: Y 軸の表示(3 つ)と、ツリーのダブルクリックで追加する先(2 つ)。
-    // 親が同じ QRadioButton は、自動で全部が 1 組になってしまうので、QButtonGroup で分ける
+    // 親が同じ QRadioButton は、自動で全部が 1 組になってしまうので、QButtonGroup で分ける。
+    // 注意: setupUi の中では、まだ全部が 1 組なので、各ボタンの「最初から ON」が、あとのボタンに上書きされて消える
+    // (Y 軸の Same scale が、追加先の Signals を ON にした時点で OFF に戻っていた)。
+    // 組に分けたあとで、どれも ON でない組には、既定のボタンを ON にする。排他の組なので、以後は必ずどれか 1 つが ON
     QButtonGroup *yaxis_group = new QButtonGroup(this);
+    yaxis_group->setExclusive(true);
     for(QRadioButton *r : {ui->radioSame,ui->radioCenter,ui->radioIndependent})yaxis_group->addButton(r);
     QButtonGroup *dest_group = new QButtonGroup(this);
+    dest_group->setExclusive(true);
     for(QRadioButton *r : {ui->radioToSignals,ui->radioToReference})dest_group->addButton(r);
+    if(!yaxis_group->checkedButton())ui->radioSame->setChecked(true);          // 既定: Same scale for A and B
+    if(!dest_group->checkedButton())ui->radioToSignals->setChecked(true);       // 既定: Signals
     // 1 行が 4 列(トレンド・散布図 × A・B)なので、既定の幅は広い。画面より広くならないようにする
     if(screen())resize(qMin(width(),screen()->availableGeometry().width()),height());
     cerr << "Config directory : " << QFileInfo(signal_list_file("signals.txt")).absolutePath().toStdString()
