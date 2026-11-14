@@ -164,9 +164,19 @@
        </widget>
       </item>
       <item>
-       <widget class="QCheckBox" name="checkBoxSameY">
+       <widget class="QLabel" name="label_yaxis">
         <property name="text">
-         <string>Same Y range for A and B</string>
+         <string>Y axis:</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QRadioButton" name="radioSame">
+        <property name="toolTip">
+         <string>Plot A and B with the same Y range, auto-scaled so that both fit in the graph (the actual values are shown)</string>
+        </property>
+        <property name="text">
+         <string>Same scale for A and B</string>
         </property>
         <property name="checked">
          <bool>true</bool>
@@ -174,12 +184,25 @@
        </widget>
       </item>
       <item>
-       <widget class="QCheckBox" name="checkBoxCenter">
+       <widget class="QRadioButton" name="radioCenter">
         <property name="toolTip">
-         <string>Subtract the mean of each period from its values, so that A and B are both centered at 0 (display only; the statistics are not changed)</string>
+         <string>Subtract the mean of each period from its values, so that A and B are both centered at 0 and share the same Y range (display only; the statistics are not changed)</string>
         </property>
         <property name="text">
          <string>Center A and B (subtract each mean)</string>
+        </property>
+        <property name="checked">
+         <bool>false</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QRadioButton" name="radioIndependent">
+        <property name="toolTip">
+         <string>Auto-scale A and B separately (the Y ranges of A and B may differ)</string>
+        </property>
+        <property name="text">
+         <string>Independent (auto-scale each)</string>
         </property>
         <property name="checked">
          <bool>false</bool>

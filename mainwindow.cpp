@@ -532,8 +532,12 @@ void MainWindow::update_view()
     if(!data_a || !data_b)return;
     const int n = view_signals.size();
     var_params.threshold = ui->spinThreshold->value();
-    const bool same_y = ui->checkBoxSameY->isChecked();
-    const bool center = ui->checkBoxCenter->isChecked();
+    // Y 軸の表示:
+    //   Same scale  : 値のまま、A と B を同じ範囲に収める(両方が収まるオートスケール)
+    //   Center      : A・B それぞれの平均を引いて、同じ範囲に収める
+    //   Independent : A と B を別々にオートスケールする
+    const bool center = ui->radioCenter->isChecked();
+    const bool same_y = !ui->radioIndependent->isChecked();
 
     std::vector<VarCompare> cmp(n);
     std::vector<std::vector<double>> sa(n),sb(n);
@@ -659,14 +663,19 @@ void MainWindow::on_spinThreshold_valueChanged(double)
     update_view();
 }
 
-void MainWindow::on_checkBoxSameY_toggled(bool)
+void MainWindow::on_radioSame_toggled(bool checked)
 {
-    update_view();
+    if(checked)update_view();
 }
 
-void MainWindow::on_checkBoxCenter_toggled(bool)
+void MainWindow::on_radioCenter_toggled(bool checked)
 {
-    update_view();
+    if(checked)update_view();
+}
+
+void MainWindow::on_radioIndependent_toggled(bool checked)
+{
+    if(checked)update_view();
 }
 
 // 差の一覧を作る。列: 信号、A・B それぞれの個数と標準偏差、標準偏差の比と倍率、

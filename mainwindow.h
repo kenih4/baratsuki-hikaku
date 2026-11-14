@@ -43,8 +43,11 @@ private slots:
     void on_pushButtonDelete_clicked();
     void on_listWidget_doubleClicked(const QModelIndex &index);   // ダブルクリックした信号を先頭(基準信号)にする
     void on_spinThreshold_valueChanged(double value);     // 閾値が変わったら、判定だけ描き直す
-    void on_checkBoxSameY_toggled(bool checked);
-    void on_checkBoxCenter_toggled(bool checked);         // 各期間の平均を引いて、真ん中にそろえて表示する
+    // Y 軸の表示(ラジオボタンの 3 択): 同じスケール / 各平均を引いて中心にそろえる / A と B で独立にオートスケール
+    // 切り替えのたびに、選ばれたほうと外れたほうの両方で toggled が出るので、選ばれたほうだけで描き直す
+    void on_radioSame_toggled(bool checked);
+    void on_radioCenter_toggled(bool checked);
+    void on_radioIndependent_toggled(bool checked);
     void result_row_activated(int row,int column);        // 一覧の行をダブルクリックで、その信号のグラフへスクロール
 
     void show_tag_offset();     // File メニューの Tag Offset...(sacla_tag, sr_tag のオフセット)
