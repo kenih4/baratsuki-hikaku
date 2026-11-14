@@ -14,6 +14,7 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QCheckBox>
+#include <QButtonGroup>
 #include <QTableWidget>
 #include <QHeaderView>
 #include <QFormLayout>
@@ -59,6 +60,12 @@ MainWindow::MainWindow(QWidget *parent)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    // ラジオボタンの組: Y 軸の表示(3 つ)と、ツリーのダブルクリックで追加する先(2 つ)。
+    // 親が同じ QRadioButton は、自動で全部が 1 組になってしまうので、QButtonGroup で分ける
+    QButtonGroup *yaxis_group = new QButtonGroup(this);
+    for(QRadioButton *r : {ui->radioSame,ui->radioCenter,ui->radioIndependent})yaxis_group->addButton(r);
+    QButtonGroup *dest_group = new QButtonGroup(this);
+    for(QRadioButton *r : {ui->radioToSignals,ui->radioToReference})dest_group->addButton(r);
     // 1 行が 4 列(トレンド・散布図 × A・B)なので、既定の幅は広い。画面より広くならないようにする
     if(screen())resize(qMin(width(),screen()->availableGeometry().width()),height());
     cerr << "Config directory : " << QFileInfo(signal_list_file("signals.txt")).absolutePath().toStdString()
@@ -102,13 +109,16 @@ MainWindow::MainWindow(QWidget *parent)
     load_signal_list(ui->listWidget,"signals.txt");
     // listWidget が変更されたら信号リストファイルに保存する
     connect_save_signal_list(ui->listWidget,"signals.txt");
-    // 先頭の信号(基準信号)を太字にする。リストが変わるたびに付け直す
-    ui->listWidget->setToolTip(tr("The top signal is the reference (Y axis of the scatter plots).\nDouble-click a signal to move it to the top."));
-    auto refresh = [this](){refresh_reference_font();};
-    connect(ui->listWidget->model(),&QAbstractItemModel::rowsInserted,this,refresh);
-    connect(ui->listWidget->model(),&QAbstractItemModel::rowsRemoved,this,refresh);
-    connect(ui->listWidget->model(),&QAbstractItemModel::rowsMoved,this,refresh);
-    refresh_reference_font();
+    ui->listWidget->setToolTip(tr("Each signal here gets one row of graphs. Double-click a signal in the tree to add it."));
+
+    // 基準信号: 専用のリスト。target.txt から読む(無ければ空)。2 つ以上書いてあっても、使うのは最初の 1 つ。
+    // 保存の接続は、余分を外したあとに行う(読んだだけでは、ファイルを書き換えない)
+    load_signal_list(ui->listReference,"target.txt");
+    while(ui->listReference->count()>1){
+        cerr << "WARNING: target.txt has more than one signal; using the first one only" << endl;
+        delete ui->listReference->takeItem(ui->listReference->count()-1);
+    }
+    connect_save_signal_list(ui->listReference,"target.txt");
 
     create_tree();
     createActions();
@@ -353,6 +363,8 @@ Shot_data *MainWindow::fetch_shots(const QDateTime &end,qint64 width_sec,const Q
     for(int i= 0;i<ui->listWidget->count();++i){
         d->add_signal(ui->listWidget->item(i)->text().toStdString());
     }
+    const QString ref = reference_signal();
+    if(!ref.isEmpty())d->add_signal(ref.toStdString());        // 基準信号は、リストに無くても取得する(重複は add_signal が除く)
     d->get_tag(end.addSecs(-width_sec).toString(DATE_FORMAT).toStdString(),
                end.toString(DATE_FORMAT).toStdString());
     if(!d->canceled())d->db_get_sync_data();
@@ -403,6 +415,7 @@ void MainWindow::on_pushButtonGet_clicked()
     // 表示に使う信号と期間は、Get した時点のものを覚えておく(あとでリストを変えても、行がずれないように)
     view_signals.clear();
     for(int i=0;i<ui->listWidget->count();++i)view_signals << ui->listWidget->item(i)->text();
+    view_reference = reference_signal();
     win_a_end = end_a.toMSecsSinceEpoch()/1000.0;
     win_a_beg = win_a_end - width_a;
     win_b_end = end_b.toMSecsSinceEpoch()/1000.0;
@@ -531,8 +544,9 @@ static void collect_pairs(Shot_data *d,const string &xname,const string &yname,s
 
 void MainWindow::draw_scatter(QCustomPlot *plot,const std::vector<double> &x,const std::vector<double> &y,
                               double xlo,double xhi,double ylo,double yhi,double xoff,double yoff,
-                              const QString &xname,const QString &yname,VarVerdict verdict,bool reference)
+                              const QString &xname,const QString &yname,VarVerdict verdict,const QString &note)
 {
+    const bool reference = !note.isEmpty();
     QVector<double> sx,sy;
     if(!reference){
         for(size_t i=0;i<x.size() && i<y.size();i++){
@@ -557,7 +571,7 @@ void MainWindow::draw_scatter(QCustomPlot *plot,const std::vector<double> &x,con
     PlotItems &it = plot_items[plot];
     if(!it.text)it.text = make_info_text(plot,font());
     if(reference){
-        it.text->setText(tr("reference signal\n(top of the list)"));
+        it.text->setText(note);
     }else{
         double r = pearson_r(x,y),rho = spearman_rho(x,y);
         auto fmt = [](double v){return std::isfinite(v) ? QString::number(v,'f',2) : QString("-");};
@@ -617,12 +631,15 @@ void MainWindow::update_view()
         if(A.ok)pad(A.lo,A.hi);
         if(B.ok)pad(B.lo,B.hi);
     };
-    // 散布図の縦軸は、基準信号(リストの一番上)
+    // 散布図の縦軸は、基準信号(専用のリスト。リストの信号と同じとは限らないので、別に集める)
     Axis ref_a,ref_b;
-    string ref_name;
-    if(n>0){
-        make_axes(sa[0],sb[0],cmp[0].a,cmp[0].b,ref_a,ref_b);
-        ref_name = view_signals[0].toStdString();
+    const string ref_name = view_reference.toStdString();
+    if(!view_reference.isEmpty()){
+        std::vector<double> ra,rb;
+        QVector<double> t_dummy,v_dummy;                // 基準信号のトレンドは描かないので、時刻の列は使わない
+        collect_series(data_a,ref_name,ra,t_dummy,v_dummy);
+        collect_series(data_b,ref_name,rb,t_dummy,v_dummy);
+        make_axes(ra,rb,var_stats(ra),var_stats(rb),ref_a,ref_b);
     }
 
     for(int k=0;k<plots_a.size();k++){
@@ -634,17 +651,19 @@ void MainWindow::update_view()
         draw_plot(plots_a[k],ta[k],va[k],cmp[k].a,win_a_beg,win_a_end,ax_a.lo,ax_a.hi,view_signals[k],COLOR_A,cmp[k].verdict,ax_a.off);
         draw_plot(plots_b[k],tb[k],vb[k],cmp[k].b,win_b_beg,win_b_end,ax_b.lo,ax_b.hi,view_signals[k],COLOR_B,cmp[k].verdict,ax_b.off);
         // 散布図: 横軸 = この行の信号(トレンドの縦軸と同じ範囲・同じ引く量)、縦軸 = 基準信号
-        const bool is_ref = (k==0);
+        QString note;
+        if(view_reference.isEmpty())note = tr("no reference signal\n(set it in the Reference list)");
+        else if(view_signals[k]==view_reference)note = tr("reference signal");       // 自分自身との散布図は無意味
         std::vector<double> xa,ya,xb,yb;
-        if(!is_ref){
+        if(note.isEmpty()){
             const string name = view_signals[k].toStdString();
             collect_pairs(data_a,name,ref_name,xa,ya);
             collect_pairs(data_b,name,ref_name,xb,yb);
         }
         draw_scatter(scatter_a[k],xa,ya,ax_a.lo,ax_a.hi,ref_a.lo,ref_a.hi,ax_a.off,ref_a.off,
-                     view_signals[k],view_signals[0],cmp[k].verdict,is_ref);
+                     view_signals[k],view_reference,cmp[k].verdict,note);
         draw_scatter(scatter_b[k],xb,yb,ax_b.lo,ax_b.hi,ref_b.lo,ref_b.hi,ax_b.off,ref_b.off,
-                     view_signals[k],view_signals[0],cmp[k].verdict,is_ref);
+                     view_signals[k],view_reference,cmp[k].verdict,note);
     }
 
     // 一覧: 差が大きい順(判定の重さ → 倍率の大きい順)
@@ -787,6 +806,7 @@ void MainWindow::check_config_files()
     struct Item{const char *file;const char *meaning;};
     const Item items[] = {
         {"signals.txt",             "信号リスト(無ければ空。ツリーから追加)"},
+        {"target.txt",              "基準信号(散布図の縦軸)。無ければ空で、散布図は出ない"},
         {"tree_groups.txt",         "信号ツリーのグループ名(既定の14グループを使用)"},
         {"settings.ini",            "日時 A・B のグラフの色、差が大きいとする倍率など(既定の色、1.5 倍を使用)"},
     };
@@ -887,11 +907,17 @@ void MainWindow::show_tag_offset()
     dlg->show();
 }
 
-// 信号ツリーのダブルクリックで、信号をリストに加える(すでにあれば何もしない)
+// 信号ツリーのダブルクリックで、信号を加える。加える先は、ラジオボタンで選ぶ:
+//   Signals   : 信号リストに加える(すでにあれば何もしない)
+//   Reference : 基準信号にする(今の基準信号を置き換える)
 void MainWindow::on_treeWidget_itemDoubleClicked(QTreeWidgetItem *item, int column)
 {
     DLOG<<column<<item->text(column).toStdString()<<endl;
     if(item->childCount()!=0)return;
+    if(ui->radioToReference->isChecked()){
+        set_reference(item->text(column));
+        return;
+    }
     if(!ui->listWidget->findItems(item->text(column),Qt::MatchExactly).isEmpty())return;
     ui->listWidget->addItem(item->text(column));
 }
@@ -950,6 +976,10 @@ void MainWindow::create_tree()
 
 void MainWindow::on_pushButtonDelete_clicked()
 {
+    if(ui->radioToReference->isChecked()){      // 基準信号を空にする
+        ui->listReference->clear();
+        return;
+    }
     QListWidgetItem* currentItem = ui->listWidget->takeItem( ui->listWidget->currentRow());
     if ( NULL != currentItem )
     {
@@ -957,26 +987,15 @@ void MainWindow::on_pushButtonDelete_clicked()
     }
 }
 
-// リストの先頭の信号が基準信号(散布図の縦軸)。先頭だけ太字にして見分ける
-void MainWindow::refresh_reference_font()
+QString MainWindow::reference_signal() const
 {
-    for(int i=0;i<ui->listWidget->count();++i){
-        QListWidgetItem *it = ui->listWidget->item(i);
-        QFont f = it->font();
-        if(f.bold()!=(i==0)){
-            f.setBold(i==0);
-            it->setFont(f);
-        }
-    }
+    return ui->listReference->count()>0 ? ui->listReference->item(0)->text() : QString();
 }
 
-// ダブルクリックした信号を、リストの先頭(基準信号)にする。リストの変更なので、signals.txt にも保存される
-void MainWindow::on_listWidget_doubleClicked(const QModelIndex &index)
+void MainWindow::set_reference(const QString &name)
 {
-    QListWidgetItem *it = ui->listWidget->takeItem(index.row());
-    if(!it)return;
-    ui->listWidget->insertItem(0,it);
-    ui->listWidget->setCurrentRow(0);
+    ui->listReference->clear();
+    ui->listReference->addItem(name);
 }
 
 void MainWindow::createActions()

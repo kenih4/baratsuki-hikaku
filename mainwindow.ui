@@ -244,9 +244,92 @@
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="pushButtonDelete">
+         <layout class="QHBoxLayout" name="horizontalLayout_dest">
+          <item>
+           <widget class="QLabel" name="label_dest">
+            <property name="text">
+             <string>Double-click adds to:</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="radioToSignals">
+            <property name="toolTip">
+             <string>Double-clicking a signal in the tree adds it to the Signals list</string>
+            </property>
+            <property name="text">
+             <string>Signals</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="radioToReference">
+            <property name="toolTip">
+             <string>Double-clicking a signal in the tree sets it as the reference signal (replaces the current one)</string>
+            </property>
+            <property name="text">
+             <string>Reference</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="horizontalSpacer_dest">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>20</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QPushButton" name="pushButtonDelete">
+            <property name="toolTip">
+             <string>Delete the selected signal from the Signals list, or clear the reference signal (whichever is chosen on the left)</string>
+            </property>
+            <property name="text">
+             <string>Delete</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <widget class="QLabel" name="label_reference">
           <property name="text">
-           <string>Delete</string>
+           <string>Reference signal (target.txt) - Y axis of the scatter plots</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QListWidget" name="listReference">
+          <property name="minimumSize">
+           <size>
+            <width>260</width>
+            <height>30</height>
+           </size>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>16777215</width>
+            <height>42</height>
+           </size>
+          </property>
+          <property name="toolTip">
+           <string>The reference signal: the Y axis of every scatter plot. It is read from target.txt at start and saved when changed</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="label_signals">
+          <property name="text">
+           <string>Signals (signals.txt) - one row of graphs each</string>
           </property>
          </widget>
         </item>

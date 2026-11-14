@@ -84,14 +84,24 @@
 
 ### 2-4. 基準信号と相関の散布図
 
-- **基準信号 = 信号リスト(`signals.txt`)の一番上の信号**(ユーザー指定)。リストの先頭は太字で表示する。
-  リストの信号を**ダブルクリックすると先頭に移る**(元のアプリと同じ操作。`signals.txt` にも保存される)。
-  Get した時点のリストの先頭を使う(あとでリストを変えても、表示中の行はずれない)。
+- **基準信号は、専用のリスト(画面の左側の「Reference signal」)に 1 つだけ入れる**(ユーザー指定。以前は
+  信号リストの先頭が基準だったが、分かりにくいので分けた。信号リストの先頭は、もう特別ではない)。
+  - **設定ファイルは `target.txt`**(設定ディレクトリ。1 行に 1 つの信号名)。**起動時に読んで初期値にし**、
+    リストを変更するたびに自動で保存する(`signals.txt` と同じ方式)。無ければ空で、散布図は出さない
+    (`no reference signal`)。2 つ以上書いてあっても、使うのは最初の 1 つ(警告を出す。読んだだけではファイルを書き換えない)。
+  - 設定のしかた: ツリーの上の「Double-click adds to:」で **Reference** を選んで、ツリーの信号をダブルクリックする
+    (今の基準信号を**置き換える**)。**Signals** を選んだときは、これまでどおり信号リストに加わる。
+    Delete ボタンは、選んでいるほうに効く(Reference なら基準信号を空にする、Signals なら選んだ信号を外す)。
+  - 基準信号は、信号リストに無くても取得する(`fetch_shots` が加える)。信号リストにも入れれば、その行のトレンドも出る
+    (その行の散布図は、自分自身との散布図が無意味なので `reference signal` と出す)。
+  - Get した時点の基準信号を使う(`view_reference`。あとでリストを変えても、表示中の行はずれない)。
+  - 初めて起動したとき(`target.txt` が無い)は、起動時の設定ファイルの警告に出る。基準信号を選べば、ファイルが作られる。
+    **以前の `signals.txt` の先頭の信号は、引き継がない**(必要なら、基準信号として選び直す)。
 - 各トレンドグラフの右隣に、**散布図**を置く: 横軸 = その行の信号、縦軸 = 基準信号。同じショットどうしの組
   (どちらかが欠測のショットは除く)。A の散布図は A の期間、B の散布図は B の期間のデータ。
 - 左上の注記: `n`(組の数)、`r`(ピアソンの積率相関)、`rho`(スピアマンの順位相関。同順位は平均順位)。
   r は直線的な関係、rho は単調な関係を見る(放物線の関係は両方とも約 0 になる)。個数が 3 未満、または定数なら `-`。
-- 基準信号自身の行は、自分自身との散布図が無意味なので、空にして `reference signal` と表示する。
+- 基準信号自身の行(行の信号 = 基準信号)は、空にして `reference signal` と表示する。
 - 横軸の範囲・Center で引く量は、同じ行のトレンドの縦軸と**同じ**。縦軸(基準信号)の範囲と引く量は、
   基準信号の行のトレンドと同じ。Y 軸が Same scale / Center なら、A と B の散布図も同じ範囲にそろえる。
 - 背景色は、同じ行のトレンドと同じ(差の判定の色)。**相関そのものは、判定・一覧には使っていない**
@@ -109,7 +119,7 @@
 | `main.cpp` | 起動。`setApplicationName("baratsuki-hikaku")`、コマンドライン引数の処理(下の「コマンドライン引数」) |
 | `period_args.h/.cpp` | 引数の日時・時間幅の文字列の解釈(`parse_period_time` / `parse_period_width`)。QtCore だけに依存 |
 | `tests/test_period_args.cpp` | `period_args.cpp` の単体試験(実行方法はファイル先頭のコメント) |
-| `mainwindow.h/.cpp/.ui` | 画面。操作欄(日時 A・B、時間幅、Now、Get、閾値、Y 軸をそろえる)、信号ツリー、信号リスト、信号ごとの左右のグラフ、差の一覧 |
+| `mainwindow.h/.cpp/.ui` | 画面。操作欄(日時 A・B、時間幅、Now、Get、閾値、Y 軸の表示)、信号ツリー、基準信号のリスト、信号リスト、信号ごとのグラフ(トレンドと散布図)、差の一覧 |
 | `variation.h/.cpp` | バラつきの指標(個数・平均・σ・CV・中央値・MAD・IQR)と、A/B の比較・判定・Brown–Forsythe 検定、相関(`pearson_r` / `spearman_rho`)。**Qt にも DB にも依存しない** |
 | `tests/test_variation.cpp` | `variation.cpp` の単体試験(実行方法はファイル先頭のコメント) |
 | `shot_data.h/.cpp` | データ取得層 `Shot_data`(旧 `Corr_data`)。タグ決定 `get_tag(beg,end)`、値の取得 `db_get_sync_data`、進捗の通知とキャンセル `set_progress` / `canceled`、`value()`、`get_range()`、`detrend()`、`outfile()` |
@@ -122,7 +132,7 @@
 ### 流用した部品(元の関数を、ほぼそのまま)
 
 設定ディレクトリ(`signal_list_file` / `set_config_dir`)、`ini_string`、`load_colors`(キーは `Colors/a`, `Colors/b`)、
-信号リストの読み書き(`load_signal_list` / `save_signal_list`。行の先頭の語だけを信号名にする)、
+信号リストの読み書き(`load_signal_list` / `save_signal_list`。行の先頭の語だけを信号名にする。`signals.txt` と `target.txt` の両方に使う)、
 信号ツリー(`create_tree` / `load_group_list`)、`check_config_files` / `open_config_files`、`show_tag_offset`、
 スクロール領域のグラフ行(`create_plot_area` / `fit_row_height` / `ensure_plot_rows` / `eventFilter` のホイール制御。
 元の `create_extra_plots` 系を、A(左)・B(右)の 2 列にしたもの)。
@@ -132,7 +142,7 @@
 - MIC・相関(`mine.c/.h`、`cppmine.*`)、ランダムフォレスト(`forest.*`、Importance)、Spearman・検定、Stats
 - 散布図(基準信号 × 他信号)、ランキング、Rank by メニュー、More Scatter Plots
 - Highlight・Gravity・平均の差、最新ショットの平均・十字印・最新 3 点の線、ビン平均の曲線、Gradient
-- 基準信号の考え方(リストの先頭が特別)、分母信号・効率(`signals_denominator.txt`、`sig_d`)
+- 元の「リストの先頭が基準信号」の考え方(§2-4 で、専用のリスト + `target.txt` として作り直した)、分母信号・効率(`signals_denominator.txt`、`sig_d`)
 - 「Add」「Fix」「Calc」「Threshold」「Auto reload」と周期タイマー、`add_tag` / `add_db_get_sync_data` / `get_tag(endtime)`
   (A/B は固定の過去の範囲を 1 回取るだけなので、追加取得は要らない)
 - 範囲選択(Trend 上の 2 本の縦線、`pushButton_3`)、トレンドのマウス追従
@@ -226,7 +236,7 @@ baratsuki-hikaku -a "2026/11/01 09:00:00" --a-width 1h -b now --b-width 90m --ge
 5. **グラフの種類**: 時系列のみでよいか、ヒストグラムも並べるか。
 6. (暫定)A と B の時間幅は**別々に**変えられる(数値 + 単位 min / hour / day)。同じにしたいだけなら、片方に合わせて入力する。
 8. 散布図の相関(r / rho)の、A と B の違いを、一覧に出す・知らせるか(今は散布図の注記だけ)。
-   基準信号を、リストの先頭ではなく別の方法(専用の選択など)で選ぶほうがよいか。
+   (基準信号の選び方は、専用のリスト + `target.txt` にした。§2-4)
 7. (暫定)日時は**ローカル時間**の文字列 `yyyy/MM/dd HH:mm:ss` を、そのまま DB API に渡す(元のアプリと同じ)。
    `db_unixtime_us_to_date` が返す時刻と、同じ時間帯で扱われているかは、実機で確認する。
 

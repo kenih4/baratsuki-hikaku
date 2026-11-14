@@ -43,7 +43,6 @@ private slots:
     void on_pushButtonNowB_clicked();
     void on_treeWidget_itemDoubleClicked(QTreeWidgetItem *item, int column);
     void on_pushButtonDelete_clicked();
-    void on_listWidget_doubleClicked(const QModelIndex &index);   // ダブルクリックした信号を先頭(基準信号)にする
     void on_spinThreshold_valueChanged(double value);     // 閾値が変わったら、判定だけ描き直す
     // Y 軸の表示(ラジオボタンの 3 択): 同じスケール / 各平均を引いて中心にそろえる / A と B で独立にオートスケール
     // 切り替えのたびに、選ばれたほうと外れたほうの両方で toggled が出るので、選ばれたほうだけで描き直す
@@ -89,7 +88,9 @@ private:
     QVector<QCustomPlot*> plots_b;      // 日時 B のトレンド
     QVector<QCustomPlot*> scatter_b;    // 日時 B の散布図
     void scatter_init(QCustomPlot *plot,const QColor &color);
-    void refresh_reference_font();      // リストの先頭(基準信号)だけを太字にする
+    // 基準信号(散布図の縦軸)。専用のリスト(listReference)に 1 つだけ入れる。設定ファイルは target.txt
+    QString reference_signal() const;                 // リストの信号名(無ければ空)
+    void set_reference(const QString &name);          // 置き換える(リストの変更なので、target.txt にも保存される)
 
     // 取得済みのデータから、グラフ・一覧・通知を描き直す(DB は読まない)
     void update_view();
@@ -104,12 +105,14 @@ private:
                    double xbeg,double xend,double ylo,double yhi,const QString &signal,
                    const QColor &color,VarVerdict verdict,double offset);
     // 散布図 1 つを描く。x, y は同じショットの値の組(引く前の値)。xoff, yoff は表示のとき引く量(Center がオフなら 0)、
-    // xlo..yhi は引いたあとの値での範囲。reference=true は基準信号の行(自分自身との散布図は無意味なので空にする)
+    // xlo..yhi は引いたあとの値での範囲。note が空でないときは、点を出さずにその文を出す
+    // (基準信号自身の行、または基準信号が未設定のとき)
     void draw_scatter(QCustomPlot *plot,const std::vector<double> &x,const std::vector<double> &y,
                       double xlo,double xhi,double ylo,double yhi,double xoff,double yoff,
-                      const QString &xname,const QString &yname,VarVerdict verdict,bool reference);
+                      const QString &xname,const QString &yname,VarVerdict verdict,const QString &note);
     QTableWidget *result_table = nullptr;
     QStringList view_signals;           // 最後に Get したときの信号(行の順)
+    QString view_reference;             // 最後に Get したときの基準信号
     double win_a_beg = 0,win_a_end = 0; // 日時 A・B の期間(エポック秒)
     double win_b_beg = 0,win_b_end = 0;
     VarParams var_params;               // 閾値は画面の値。有意水準と最小個数は settings.ini
