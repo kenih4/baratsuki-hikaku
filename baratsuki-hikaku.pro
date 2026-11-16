@@ -44,3 +44,6 @@ include ($$(QTGUI_SETUP)/prj2010gui_libs_xfel.pri)
 
 RESOURCES += \
     figures.qrc
+
+# make distclean で、m.sh がアップロード用にリネームしたバイナリ(接尾辞は環境変数 USE_DATASTAX の値)も消す
+QMAKE_DISTCLEAN += $${TARGET}_USE_DATASTAX_true $${TARGET}_USE_DATASTAX_false

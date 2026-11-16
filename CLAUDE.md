@@ -291,6 +291,9 @@ qmake baratsuki-hikaku.pro && make -j8
   DB API が無ければ、コンパイルまでは通せても、リンクと GUI の実行はできない(TECH_NOTES §2-1)。
   DB に依存しない部分(指標の計算など)は、DB API をスタブで差し替えて単体で確かめる(TECH_NOTES §5)。
 - 警告は `-Wall -Wextra` で確かめ、無視しない。
+- `make distclean` は、生成物に加えて、`.qmake.stash` と、`m.sh` がアップロード用にリネームしたバイナリ
+  (`baratsuki-hikaku_USE_DATASTAX_true` / `_false`)も消す(`.pro` の `QMAKE_DISTCLEAN`。接尾辞は環境変数 `USE_DATASTAX` の値)。
+  `.qmake.stash` は、`.gitignore` で除外済みで、git の管理下にない。
 - **ソースのディレクトリで `m.sh` などをビルドすると、生成物(`ui_*.h`、`moc_*.cpp`、`*.o`、`Makefile`)が残る。**
   別ディレクトリ(シャドウビルド)でビルドすると、`#include "ui_mainwindow.h"` が古いほうを拾って、
   `.ui` に足した部品が「無い」というエラーになる(TECH_NOTES §4-6)。シャドウビルドで確かめるときは、
